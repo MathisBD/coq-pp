@@ -31,11 +31,11 @@ From Coq Require Import Strings.String.
     document needs in order to fit on a single line.
 *)
 Inductive requirement :=
-  | (** [Infinity] is used for a document which cannot be printed on single line.
+  (** [Infinity] is used for a document which cannot be printed on single line.
         This happens e.g. if the document contains a hardline. *)
-    Infinity : requirement 
-  | (** [Width n] is used for a document which takes [n] characters in flat mode. *)
-    Width : nat -> requirement. 
+  | Infinity : requirement 
+  (** [Width n] is used for a document which takes [n] characters in flat mode. *)
+  | Width : nat -> requirement. 
 
 (** [add_requirements r1 r2] adds the requirements [r1] and [r2], 
     taking care that adding infinity results in infinity. *)
@@ -50,47 +50,47 @@ Definition add_requirements (r1 r2 : requirement) : requirement :=
 (** The type of documents, which depends on the type of annotations.
     The only construct which actually uses annotations is [Annot]. *)
 Inductive doc (A : Type) : Type :=   
-  (* [Empty] is the empty document. *)
+  (** [Empty] is the empty document. *)
   | Empty : doc A
-  (* [Blank n] is an atomic document that consists of [n] blank characters. *)
+  (** [Blank n] is an atomic document that consists of [n] blank characters. *)
   | Blank : nat -> doc A
-  (* [AString len s] is an atomic string [s] of length [len]. 
-     We assume (but do not check) that strings do not contain a newline character. *)
+  (** [AString len s] is an atomic string [s] of length [len]. 
+      We assume (but do not check) that strings do not contain a newline character. *)
   | AString : nat -> string -> doc A
-  (* [IfFlat d1 d2] turns into the document :
-     - [d1] in flattening mode.
-     - [d2] in normal mode. 
+  (** [IfFlat d1 d2] turns into the document :
+      - [d1] in flattening mode.
+      - [d2] in normal mode. 
      
-     We maintain the invariant that [d1] should not itself be of the form [IfFlat _ _].
-     Users should use the function [ifflat] defined below to ensure this invariant is preserved.
+      We maintain the invariant that [d1] should not itself be of the form [IfFlat _ _].
+      Users should use the function [ifflat] defined below to ensure this invariant is preserved.
   *)
   | IfFlat : doc A -> doc A -> doc A
-  (* When in flattening mode, [HardLine] causes a failure, which requires
-     backtracking all the way until the stack is empty. When not in flattening
-     mode, it represents a newline character, followed with an appropriate
-     number of indentation. A common way of using [HardLine] is to only use it
-     directly within the right branch of an [IfFlat] construct. *)
+  (** When in flattening mode, [HardLine] causes a failure, which requires
+      backtracking all the way until the stack is empty. When not in flattening
+      mode, it represents a newline character, followed with an appropriate
+      number of indentation. A common way of using [HardLine] is to only use it
+      directly within the right branch of an [IfFlat] construct. *)
   | HardLine
-  (* [Cat req doc1 doc2] is the concatenation of the documents [doc1] and [doc2]. 
-     The space requirement [req] is the sum of the requirements of [doc1] and [doc2]. *)
+  (** [Cat req doc1 doc2] is the concatenation of the documents [doc1] and [doc2]. 
+      The space requirement [req] is the sum of the requirements of [doc1] and [doc2]. *)
   | Cat : requirement -> doc A -> doc A -> doc A
-  (* [Nest req n doc] is the document [doc], in which the indentation
-     level has been increased by [n], that is in which [n] blanks have been
-     inserted after every newline character. 
-     The space requirement [req] is the same as the requirement of [doc]. *)
+  (** [Nest req n doc] is the document [doc], in which the indentation
+      level has been increased by [n], that is in which [n] blanks have been
+      inserted after every newline character. 
+      The space requirement [req] is the same as the requirement of [doc]. *)
   | Nest : requirement -> nat -> doc A -> doc A
-  (* [Group req doc] represents an alternative: it is either a flattened
-     form of [doc], in which occurrences of [Group] disappear and occurrences
-     of [IfFlat] resolve to their left branch, or [doc] itself. 
-     The space requirement [req] is the same as the requirement of [doc]. *)
+  (** [Group req doc] represents an alternative: it is either a flattened
+      form of [doc], in which occurrences of [Group] disappear and occurrences
+      of [IfFlat] resolve to their left branch, or [doc] itself. 
+      The space requirement [req] is the same as the requirement of [doc]. *)
   | Group : requirement -> doc A -> doc A
-  (* [Align req doc] increases the indentation level to reach the current column.
-     Thus, the document [doc] is rendered within a box whose upper
-     left corner is the current position.
-     The space requirement [req] is the same as the requirement of [doc]. *)
+  (** [Align req doc] increases the indentation level to reach the current column.
+      Thus, the document [doc] is rendered within a box whose upper
+      left corner is the current position.
+      The space requirement [req] is the same as the requirement of [doc]. *)
   | Align : requirement -> doc A -> doc A
-    (* [Annot req ann doc] annotates the document [doc] with annotation [ann].
-       The space requirement [req] is the same as the requirement of [doc]. *)
+  (** [Annot req ann doc] annotates the document [doc] with annotation [ann].
+      The space requirement [req] is the same as the requirement of [doc]. *)
   | Annot : requirement -> A -> doc A -> doc A.
 
 Arguments Empty    {A}%_type_scope.
