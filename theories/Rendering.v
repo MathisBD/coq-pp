@@ -8,7 +8,7 @@ From PPrint Require Import Documents.
     a backend, which provides a low-level output interface.
    
     The job of the backend is to :
-    - accumulate characters and strings ([add_char], [add_string]).
+    - accumulate characters and strings ([add_string]).
     - deal with annotations ([enter_annot], [exit_annot]). 
 
     I chose to represent a backend as a simple state machine :
@@ -45,11 +45,8 @@ Parameter init_state : state.
 (** Extract the output from a state. *)
 Parameter get_output : state -> output.
 
-(** Add a single character. *)
-Parameter add_char : Ascii.ascii -> state -> state.
-
 (** Add a string. *)
-Parameter add_string : String.string -> state -> state.
+Parameter add_string : string -> state -> state.
 
 (** Enter an annotation : all characters and strings added between [enter_annot] and 
     the matching [exit_annot] should have the annotation [annot] applied to them. *)
@@ -66,7 +63,7 @@ End Backend.
 Module Make (B : Backend).
 
 (** [make_string n c] makes a string of length [n] filled with the character [c]. *)
-Definition make_string (n : nat) (c : Ascii.ascii) : String.string :=
+Definition make_string (n : nat) (c : Ascii.ascii) : string :=
   let fix loop n acc :=
     match n with 
     | 0 => acc
@@ -91,11 +88,11 @@ Definition make_string (n : nat) (c : Ascii.ascii) : String.string :=
 Fixpoint pretty {T} (doc : doc B.annot) (flat : bool) (width indent col : nat) (state : B.state) (k : nat -> B.state -> T) : T :=
   match doc with
   | Empty => k col state
-  | AString len s => k (col + len) (B.add_string s state)
+  | Str len s => k (col + len) (B.add_string s state)
   | Blank n => k (col + n) (B.add_string (make_string n " "%char) state)
   | HardLine =>
       (* We should be in normal mode here. *)
-      let state := B.add_char "010"%char state in
+      let state := B.add_string (make_string 1 "010"%char) state in
       let state := B.add_string (make_string indent " "%char) state in
       k indent state
   | IfFlat doc1 doc2 =>
