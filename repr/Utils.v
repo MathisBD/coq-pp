@@ -1,5 +1,10 @@
-From Coq Require Import Decimal String Ascii.
+From Coq Require Import Decimal String Ascii List.
+From MetaCoq.Utils Require Import monad_utils.
+
+Import ListNotations MCMonadNotation.
 Open Scope string_scope.
+
+Set Universe Polymorphism.
 
 (** [string_of_uint n] prints the uint [n] to a string in base 10. *)
 Fixpoint string_of_uint (n : uint) :=
@@ -20,3 +25,18 @@ Fixpoint string_of_uint (n : uint) :=
 (** [string_of_nat n] prints the natural number [n] to a string in base 10. *)
 Definition string_of_nat n : string :=
   string_of_uint (Nat.to_uint n).
+
+(** [monad_mapi f l] is the same as [monad_map f l] except the function [f]
+    is fed the index of each argument. *)
+Definition monad_mapi (T : Type -> Type) (M : Monad T) (A B : Type) (f : nat -> A -> T B) (l : list A) :=
+  let fix loop i l :=
+    match l with
+    | [] => ret []
+    | x :: l => 
+      mlet x' <- f i x ;;
+      mlet l' <- loop (S i) l ;;
+      ret (x' :: l')
+    end
+  in loop 0 l.
+
+Arguments monad_mapi {T}%_function_scope {M} {A B}%_type_scope f%_function_scope l%_list_scope.

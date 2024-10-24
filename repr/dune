@@ -1,4 +1,10 @@
 (coq.theory
  (name Repr)
  (package coq-pprint)
- (theories PPrint))
+ (theories
+  PPrint
+  MetaCoq.Common
+  MetaCoq.Template
+  MetaCoq.Utils
+  Equations
+  Ltac2))

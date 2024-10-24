@@ -20,4 +20,4 @@
  (depends
   (coq
    (>= 8.20.0))
-  coq-metacoq))
+  coq-metacoq-template))
