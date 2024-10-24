@@ -1,33 +1,45 @@
-From Coq Require Import String Ascii Decimal List.
+From Coq Require Import List Decimal String Ascii. 
 From PPrint Require Import All.
+From Repr Require Import Utils.
 
 Import ListNotations.
 Open Scope string_scope.
 
+(** * Repr typeclass. *)
+
+(** [Repr] is a typeclass for objects which can be printed to a *parseable* representation.
+    That is, [repr x] should be a representation of [x] which is parseable by Coq. 
+    
+    This typeclass is implemented using the pretty-printing library [PPrint],
+    which provides documents of type [doc unit] along with document combinators
+    and a rendering engine.
+*)
 Class Repr A : Type :=
 { 
+  (** [repr_doc x] is a low-level function which prints [x] to a document of type [doc unit].
+      For a higher-level function see [repr] below. *)
   repr_doc : A -> doc unit
 }.
 
-Definition repr {A : Type} `{Repr A} (a : A) := @PpString.pp 80 (repr_doc a).
+(** [repr x] prints [x] to a string [s], such that :
+    - [s] is parseable by Coq.
+    - [s] parses to a value which is equal to [x] (definitionally equal, 
+      although not necessarily syntactically equal). 
+    
+    For instance, if [l] is equal to [List.app [1; 2] [3; 4]] 
+    then [repr l] could be the string "[1; 2; 3; 4]". *)
+Definition repr {A : Type} `{Repr A} (a : A) := 
+  (* We use a maximum character width of 80, which is standard for a text document.
+     In the future we might want to make the width customizable. *)
+  @PpString.pp 80 (repr_doc a).
 
-Fixpoint string_of_uint (n : uint) :=
-  match n with
-  | Nil => ""
-  | D0 n => String "0" (string_of_uint n)
-  | D1 n => String "1" (string_of_uint n)
-  | D2 n => String "2" (string_of_uint n)
-  | D3 n => String "3" (string_of_uint n)
-  | D4 n => String "4" (string_of_uint n)
-  | D5 n => String "5" (string_of_uint n)
-  | D6 n => String "6" (string_of_uint n)
-  | D7 n => String "7" (string_of_uint n)
-  | D8 n => String "8" (string_of_uint n)
-  | D9 n => String "9" (string_of_uint n)
-  end.
+(** * Repr instances. *)
 
-Definition string_of_nat n : string :=
-  string_of_uint (Nat.to_uint n).
+(** Representation of booleans. *)
+Instance reprBool : Repr bool :=
+{
+  repr_doc b := if b then str "true" else str "false"
+}.
 
 (** Representation of natural numbers. *)
 Instance reprNat : Repr nat :=
@@ -59,7 +71,7 @@ Instance reprList {A : Type} `{Repr A} : Repr (list A) :=
     group (align res)
 }.
 
-Record color := { red : list nat * list nat ; green : list nat ; blue : list nat }. 
+(*Record color := { red : list nat * list nat ; green : list nat ; blue : list nat }. 
 
 Instance reprColor : Repr color := 
 {
@@ -114,7 +126,7 @@ Eval compute in l_large.
 Eval compute in repr l_large.
 
 Check 
-Exact 42
+ExtremelyLongName 42
   [42; 41; 40; 39; 38; 37; 36; 35; 34; 33; 32; 31; 30; 29; 28; 27; 26; 25; 24;
    23; 22; 21; 20; 19; 18; 17; 16; 15; 14; 13; 12; 11; 10; 9; 8; 7; 6; 5; 4; 3;
    2; 1] 0
@@ -142,7 +154,4 @@ Check
 
 Eval compute in repr (range 42, List.map string_of_nat (range 26)).
 
-Eval compute in String "034" "Hello".
-
-Definition pp_inductive (constructors : list (string * doc unit)) : doc unit :=
-  
+Eval compute in String "034" "Hello".*)

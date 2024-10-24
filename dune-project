@@ -19,4 +19,5 @@
  (synopsis "A modern combinator pretty-printing library for Coq")
  (depends
   (coq
-   (>= 8.20.0))))
+   (>= 8.20.0))
+  coq-metacoq))

@@ -1,5 +1,4 @@
-From Coq Require Import Strings.String.
-From Coq Require Import List.
+From Coq Require Import List String Strings.Byte Ascii.
 Import ListNotations.
 
 (** This module implements a pretty-printing combinator library. 
@@ -54,7 +53,12 @@ Inductive doc (A : Type) : Type :=
   | Empty : doc A
   (** [Blank n] is an atomic document that consists of [n] blank characters. *)
   | Blank : nat -> doc A
-  (** [Str len s] is an atomic string [s] of length [len]. 
+  (** [Str len s] is an atomic string [s] of *apparent* length [len].
+
+      The apparent length of a string is the number of (unicode) code points which appear 
+      in the string. In general this might be less than the number of bytes in the string : 
+      in UTF8 each code point is encoded using 1 to 4 bytes.
+   
       We assume (but do not check) that strings do not contain a newline character. *)
   | Str : nat -> string -> doc A
   (** [IfFlat d1 d2] turns into the document :
@@ -140,10 +144,37 @@ Definition empty : doc A := Empty.
 Definition char c : doc A := 
   Str 1 (String c EmptyString).
 
-(** [str s] is an atomic document that consists of the string [s]. 
-    This string must not contain a newline. *)
+(** [utf8_length s] counts the number of code points that occur in [s],
+    assuming a UTF8 encoding. In general this might be smaller than the number
+    of bytes in [s] : each code point is encoded using 1 to 4 bytes. *)
+Definition utf8_length (s : string) : nat :=
+  let fix loop len s {struct s} :=
+    match s with 
+    | EmptyString => len 
+    | String b0 s =>
+      if (b0 <? ascii_of_byte x80)%char then loop (S len) s else 
+      match s with 
+      | EmptyString => len 
+      | String b1 s =>
+        if (b0 <? ascii_of_byte xe0)%char then loop (S len) s else 
+        match s with 
+        | EmptyString => len 
+        | String b2 s => 
+          if (b0 <? ascii_of_byte xf0)%char then loop (S len) s else 
+          match s with 
+          | EmptyString => len 
+          | String b3 s => loop (S len) s
+          end
+        end
+      end
+    end
+  in
+  loop 0 s.
+
+(** [str s] is an atomic document that consists of the utf8-string [s]. 
+    We assume (but do not check) that [s] does not contain a newline. *)
 Definition str s : doc A :=
-  Str (String.length s) s.
+  Str (utf8_length s) s.
 
 (** The atomic document [hardline] represents a forced newline. 
     This document has infinite ideal width: thus, if there is a choice between printing it
