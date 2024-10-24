@@ -7,10 +7,10 @@ From PPrint Require Export Documents.
 (** Export the rendering engine. *)
 From PPrint Require Export Rendering.
 
-(** * Common backends. *)
+(** * Default backend. *)
 
-(** For convenience, we instantiate the rendering engine on some common backends. *)
-
+(** For convenience, we instantiate the rendering engine on a basic string backend.
+    This backend outputs strings and does not support any annotations. *)
 Module StringBackend.
 
 (** In the state we store the list of strings printed so far, most recent first. 
@@ -28,10 +28,5 @@ Definition get_output st : string := List.fold_left String.append (List.rev st) 
 
 End StringBackend.
 
+(** To render a document of type [doc unit] to a string, use [PpString.pp]. *)
 Module PpString := Make StringBackend.
-
-(*Definition test : doc unit := 
-  str "hello" ^//^ str "there".
-
-Eval cbv in test.
-Eval cbv in @PpString.pp 15 test.*)

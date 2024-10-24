@@ -14,8 +14,6 @@ Import ListNotations.
 
     Annotations have no effect on text layout : to print to plain text
     we can simply ignore all annotations.
-
-    Author : Mathis Bouverot-Dupuis. 
 *)
 
 
@@ -34,7 +32,7 @@ Import ListNotations.
 *)
 Inductive requirement :=
   (** [Infinity] is used for a document which cannot be printed on single line.
-        This happens e.g. if the document contains a hardline. *)
+      This happens e.g. if the document contains a hardline. *)
   | Infinity : requirement 
   (** [Width n] is used for a document which takes [n] characters in flat mode. *)
   | Width : nat -> requirement. 
@@ -155,6 +153,11 @@ Definition str s : doc A :=
     This combinator should be seldom used; consider using [break] instead. *)
 Definition hardline : doc A := HardLine.
     
+(** [softline] represents an optional newline :
+    - in normal mode it is printed as a newline. 
+    - in flat mode it disappears. *)
+Definition softline : doc A := IfFlat Empty HardLine.
+
 (** The atomic document [blank n] consists of [n] blank characters. 
     A blank character is like an ordinary ASCII space character [char ' '], 
     except that blank characters that appear at the end of a line are automatically suppressed. *)
@@ -266,31 +269,33 @@ Definition hang n d : doc A := align (nest n d).
       left right
     ]
     and the following non-flat layout:
-    {[
+    [
       left
         right
-    ]}
+    ]
     - [spaces] controls the number of spaces between [left] and [right] (when flat).
     - [indent] controls the nesting of [right] (when not flat). *)
 Definition prefix spaces indent left right : doc A :=
-  group (ifflat 
+  ifflat 
     (left ^^ blank spaces ^^ right) 
-    (left ^^ nest indent (hardline ^^ right))).
-    
+    (left ^^ nest indent (hardline ^^ right)).
+
 (** [infix spaces indent left middle right] has the following flat layout:
     [
       left middle right
     ]
     and the following non-flat layout:
     [
-      left middle
-        right
+      left
+        middle
+      right
     ]
-    - [spaces] controls the number of spaces between [left] and [middle]
-      (always) and between [middle] and [right] (when flat).
-    - [indent] controls the nesting of [right] (when not flat). *)
+    - [spaces] controls the number of spaces between [left], [right] and [middle] (when flat).
+    - [indent] controls the nesting of [middle] (when not flat). *)
 Definition infix spaces indent left middle right : doc A :=
-  prefix spaces indent (left ^^ blank spaces ^^ middle) right. 
+  ifflat 
+    (left ^^ blank spaces ^^ middle ^^ blank spaces ^^ right) 
+    (left ^^ nest indent (hardline ^^ middle) ^^ hardline ^^ right).
 
 (** [flow sep docs] separates the documents in the list [docs] with the
     separator [sep] and arranges for a new line to begin whenever a document
@@ -315,7 +320,7 @@ End HighLevelCombinators.
 Notation "x ^+^ y" := (x ^^ space ^^ y) (at level 60, right associativity).
 
 (** [x ^/^ y] separates [x] and [y] with a breakable space. *)
-Notation "x ^/^ y" := (x ^^ group (break 1 ^^ y)) (at level 60, right associativity).
+Notation "x ^/^ y" := (x ^^ break 1 ^^ y) (at level 60, right associativity).
 
 (** [x ^//^ y] has the following flat layout : 
     [
