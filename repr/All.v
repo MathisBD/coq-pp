@@ -228,10 +228,10 @@ Definition option_ind := {|
     inductive_ind := 0
 |}.
 
-MetaCoq Run (derive option_ind).
+(*MetaCoq Run (derive option_ind).
 Existing Instance repr_bool.
 
-Eval compute in repr true.
+Eval compute in repr true.*)
 
 
 (*Record color := { red : list nat * list nat ; green : list nat ; blue : list nat }. 
@@ -317,4 +317,4 @@ Check
 
 Eval compute in repr (range 42, List.map string_of_nat (range 26)).
 
-Eval compute in String "034" "Hello".*)*)
+Eval compute in String "034" "Hello".*)

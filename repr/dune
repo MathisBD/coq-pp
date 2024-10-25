@@ -7,4 +7,5 @@
   MetaCoq.Template
   MetaCoq.Utils
   Equations
+  Equations.Prop
   Ltac2))
