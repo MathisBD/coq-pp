@@ -5,7 +5,7 @@ From MetaCoq.Template Require Import All Pretty.
 From MetaCoq.Utils Require Import monad_utils.
 From Coq Require Import List String.
 From PPrint Require Import All.
-From Repr Require Import Class Utils.
+From Repr Require Import Class Utils LocallyNameless Class.
 
 Import ListNotations MCMonadNotation.
 
@@ -51,59 +51,51 @@ Definition repr_ctor (label : string) (args : list (doc unit)) : doc unit :=
     (tmInferInstance None (Repr nat)) 
     (fun x => tmPrint x)).*)
 
+(** Build a single argument. *)
+Definition build_arg ctx (arg : ident) : TemplateMonad term :=
+  (* Get the type of the argument. *)
+  let arg_ty := NamedCtx.get_type ctx arg in
+  mlet t_arg_ty <- tmUnquoteTyped Type arg_ty ;;
+  (* Get the corresponding [Repr] instance. This only works if the argument type is closed. *)
+  mlet t_inst <- tmInferInstance None (Repr t_arg_ty) ;;
+  match t_inst with
+  | my_None => tmFail "Could not infer Repr instance on constructor argument"%bs
+  | my_Some t_inst => 
+    mlet inst <- tmQuote t_inst ;; 
+    mlet rd <- tmQuote (@repr_doc) ;;
+    ret $ mkApps rd [arg_ty; inst; tVar arg]
+  end.
+
 (** Build a branch for a single constructor. *)
-Definition derive_ind_branch (ind : inductive) (ctor_body : constructor_body) : TemplateMonad (branch term) :=
-  let n := List.length ctor_body.(cstr_args) in
+Definition build_branch ctx (params : list term) (ctor_body : constructor_body) : TemplateMonad (branch term) :=
   (* Get the label of the constructor. *)
   mlet label <- tmQuote =<< tmEval cbv (bytestring.String.to_string ctor_body.(cstr_name)) ;;
-  (* Get the list of arguments of the constructor (innermost arguments first). *)
-  mlet args <-
-    monad_mapi
-      (fun i decl =>
-        (* Get the type of the argument. *)
-        mlet arg_ty <-
-          (* This better be a closed type. *)
-          tmUnquoteTyped Type decl.(decl_type)
-        ;;
-        (* Get the corresponding [Repr] instance. *)
-        mlet inst <- tmInferInstance None (Repr arg_ty) ;;
-        mlet rd <- tmQuote (@repr_doc) ;;
-        match inst with
-        | my_None => tmFail "Could not infer Repr instance on constructor argument"%bs
-        | my_Some inst => 
-          mlet inst <- tmQuote inst ;; 
-          ret (mkApps rd [decl.(decl_type); inst; tRel i])
-        end
-      ) 
-      ctor_body.(cstr_args)
-  ;;
-  (* Apply [repr_ctor] to the label and the arguments. *)
-  mlet rc <- tmQuote repr_ctor ;;
-  mlet doc_unit <- tmQuote (doc unit) ;;
-  let body := mkApps rc [label; term_list doc_unit (List.rev args)] in
-  ret {| bcontext := List.map decl_name ctor_body.(cstr_args) ; bbody := body |}.
+  (* Get the list of arguments of the constructor. *)
+  with_ctor_args ctx ctor_body params $ fun ctx args =>
+    mlet repr_args <- monad_map (build_arg ctx) args ;;
+    (* Apply [repr_ctor] to the label and the arguments. *)
+    mlet rc <- tmQuote repr_ctor ;;
+    mlet doc_unit <- tmQuote (doc unit) ;;
+    ret $ mk_branch ctx args $ mkApps rc [label; term_list doc_unit repr_args].
 
 (** Derive the [repr_doc] function for an inductive type. *)
-Definition derive_ind (ind : inductive) (ind_body : one_inductive_body) : TemplateMonad term :=
-  (* Case info. *)
-  let ci := {| ci_ind := ind ; ci_npar := 0 ; ci_relevance := Relevant |} in
+Definition build_func ctx (ind : inductive) (ind_body : one_inductive_body) (params : list term) : TemplateMonad term :=
+  (* Declare the input parameter [x]. *)
+  with_decl ctx (mk_decl "x"%bs $ mkApps (tInd ind []) params) $ fun ctx x =>  
+  (* Case info. *)  
+  let ci := {| ci_ind := ind ; ci_npar := List.length params ; ci_relevance := Relevant |} in
   (* Case predicate. *)
   mlet doc_unit <- tmQuote (doc unit) ;;
   let pred := 
-    {| puinst := [] 
-    ;  pparams := [] 
-    ;  pcontext := [{| binder_name := nNamed "x"%bs ; binder_relevance := Relevant |}]
-    ;  preturn := doc_unit
-    |}
+    with_ind_indices ctx ind_body params $ fun ctx indices =>
+    with_decl ctx (mk_decl "x"%bs $ mkApps (tInd ind []) params) $ fun ctx x => 
+      mk_pred ctx params indices x doc_unit
   in
+  tmPrint =<< tmEval cbv pred ;;
   (* Case branches. *)
-  mlet branches <- monad_map (derive_ind_branch ind) ind_body.(ind_ctors) ;;
-  (* The complete function. *)
-  ret (tLambda 
-    {| binder_name := nNamed "x"%bs ; binder_relevance := Relevant |} 
-    (tInd ind []) 
-    (tCase ci pred (tRel 0) branches)).
-  
+  mlet branches <- monad_map (build_branch ctx params) ind_body.(ind_ctors) ;;
+  (* Bind the input parameter. *)
+  ret (mk_lambda ctx x $ tCase ci pred (tVar x) branches).
 
 (** [env_of_term ts] returns the global environment needed to type the terms in [ts]. 
 
@@ -126,7 +118,6 @@ Fixpoint env_of_terms (ts : list term) : TemplateMonad global_env :=
     tmReturn (merge_global_envs t_env ts_env)
   end.
 
-
 (** Derive command entry-point. *)
 Definition derive (ind : inductive) : TemplateMonad unit :=
   (* Get the global environment needed to type the inductive. *)
@@ -141,15 +132,20 @@ Definition derive (ind : inductive) : TemplateMonad unit :=
     end 
   ;;
   (* Derive the [repr_doc] function. *)
-  mlet func <- derive_ind ind ind_body ;;
+  mlet func <- build_func NamedCtx.empty ind ind_body [] ;;
+  tmPrint =<< tmEval cbv (print_term (env, Monomorphic_ctx) [] true func) ;;
   (* Package it in a [Repr] intance. *)
-  (*let repr_ind := {| inductive_mind := (MPfile ["All"%bs], "Repr"%bs); inductive_ind := 0 |} in
+  let repr_ind := {| inductive_mind := (MPfile ["Class"%bs ; "Repr"%bs], "Repr"%bs); inductive_ind := 0 |} in
   let instance := mkApps (tConstruct repr_ind 0 []) [tInd ind []; func] in
   (* Add the instance to the global environment. *)
-  tmMkDefinition "repr_bool"%bs instance.*)
-  tmPrint =<< tmEval cbv (print_term (env, Monomorphic_ctx) [] true func).
+  tmMkDefinition "repr_boption"%bs instance.
+  
+Instance repr_bool : Repr bool :=
+{ repr_doc b := if b then str "true" else str "false" }.
 
-MetaCoq Test Quote option.
+Inductive bool_option := 
+  | BNone : bool_option
+  | BSome : bool -> bool_option.
 
 Definition bool_ind := {|
   inductive_mind :=
@@ -157,15 +153,25 @@ Definition bool_ind := {|
   inductive_ind := 0
 |}.
 Definition option_ind := {|
-  inductive_mind :=
-      (MPfile ["Datatypes"%bs; "Init"%bs; "Coq"%bs], "option"%bs);
-    inductive_ind := 0
+  inductive_mind := (MPfile ["Datatypes"%bs; "Init"%bs; "Coq"%bs], "option"%bs);
+  inductive_ind := 0
+|}.
+Definition boption_ind := {|
+  inductive_mind := (MPfile ["Deriving"%bs], "bool_option"%bs);
+  inductive_ind := 0
 |}.
 
-(*MetaCoq Run (derive option_ind).
+(*MetaCoq Test Quote (fun x =>
+  match b with 
+  | true => str "true"
+  | false => str "false"
+  end).*)
+
+MetaCoq Run (derive boption_ind).
+Print repr_boption.
 Existing Instance repr_bool.
 
-Eval compute in repr true.*)
+Eval compute in repr true.
 
 
 (*Record color := { red : list nat * list nat ; green : list nat ; blue : list nat }. 
@@ -251,4 +257,4 @@ Check
 
 Eval compute in repr (range 42, List.map string_of_nat (range 26)).
 
-Eval compute in String "034" "Hello".*)
+Eval compute in String "034" "Hello".*)*)

@@ -6,6 +6,17 @@ From Repr Require Import Utils.
 
 Import MCMonadNotation.
 
+(** I use an axiom for functions which are not total.
+    Alternatives could be :
+    1. use [option A] as the return type.
+    2. use [M A] as the return type, where [M] is an error monad. 
+    
+    I went with an axiom because option 1 makes for really cumbersome syntax, 
+    and option 2 requires a nice monad library. 
+*)
+Axiom failwith : forall A, string -> A.
+Arguments failwith {_} _.
+
 (** * Named Contexts. *)
 
 Module NamedCtx.
@@ -36,25 +47,30 @@ Definition fresh_ident (ctx : t) (basename : string) : ident * t :=
   let ctx := {| decls := ctx.(decls) ; seed := ctx.(seed) + 1 |} in
   (id, ctx).
 
-(** [get_decl id ctx] retrieves the most recent declaration for [id] in [ctx]. *)
-Definition get_decl (ctx : t) (id : ident) : option context_decl :=
-  List.find_map 
-    (fun '(id', decl) => if id == id' then Some decl else None) 
-    ctx.(decls).
+(** [get_decl id ctx] retrieves the [context_decl] for [id] in [ctx]. *)
+Definition get_decl (ctx : t) (id : ident) : context_decl :=
+  option_get (failwith "NamedCtx.get_decl") $
+    List.find_map 
+      (fun '(id', decl) => if id == id' then Some decl else None) 
+      ctx.(decls).
 
-(** Same as [get_decl] but returns only the name. *)
-Definition get_name (ctx : t) (id : ident) : option aname :=
-  option_map decl_name (get_decl ctx id).
+(** [get_name id ctx] retrieves the [aname] of [id] in [ctx]. *)
+Definition get_name (ctx : t) (id : ident) : aname := decl_name $ get_decl ctx id.
 
-(** Same as [get_decl] but returns only the type. *)
-Definition get_type (ctx : t) (id : ident) : option term :=
-  option_map decl_type (get_decl ctx id).
+(** [get_type id ctx] retrieves the type of [id] in [ctx]. *)
+Definition get_type (ctx : t) (id : ident) : term := decl_type $ get_decl ctx id.
 
-(** Same as [get_decl] but returns only the body. *)
-Definition get_body (ctx : t) (id : ident) : option term :=
-  decl_body =<< (get_decl ctx id).
+(** [get_body id ctx] retrieves the body of [id] in [ctx]. *)
+Definition get_body (ctx : t) (id : ident) : option term := decl_body $ get_decl ctx id.
 
 End NamedCtx.
+
+(** [mk_decl name ty] makes a declaration with given [name] and [ty],
+    which additionally has no body and is [Relevant]. *)
+Definition mk_decl (name : string) (ty : term) : context_decl :=
+  {| decl_name := {| binder_name := nNamed name ; binder_relevance := Relevant |}
+  ;  decl_type := ty
+  ;  decl_body := None |}.
 
 (** * Inspecting terms. *)
 
@@ -175,20 +191,34 @@ Definition with_ctor_args {T} (ctx : NamedCtx.t) (ctor_body : constructor_body) 
       [mk_lambda ctx x (tVar x)]
 *)
 Definition mk_lambda (ctx : NamedCtx.t) (id : ident) (body : term) : term :=
-  match NamedCtx.get_decl ctx id with 
-  | None => (* This should not happen. *) body
-  | Some decl => tLambda decl.(decl_name) decl.(decl_type) $ abstract0 [id] body
-  end.
+  let decl := NamedCtx.get_decl ctx id in 
+  tLambda decl.(decl_name) decl.(decl_type) $ abstract0 [id] body.
 
 (** [mk_prod ctx id body] creates the dependent product [forall id. body].
     This assumes [id] is declared in [ctx]. *)
 Definition mk_prod (ctx : NamedCtx.t) (id : ident) (body : term) : term :=
-  match NamedCtx.get_decl ctx id with 
-  | None => (* This should not happen. *) body
-  | Some decl => tProd decl.(decl_name) decl.(decl_type) $ abstract0 [id] body
-  end.
+  let decl := NamedCtx.get_decl ctx id in
+  tProd decl.(decl_name) decl.(decl_type) $ abstract0 [id] body.
 
-(** [mk_case ctx ind ind_body scrutinee pred branches] builds a tCase term.
+(** [mk_pred ctx params indices x ret] creates a case predicate. 
+    - [params] are the parameters of the inductive, ordered from first to last. 
+    - [indices] are the indices of the inductive, ordered from first to last. 
+    - [x] is the scrutinee of the match expression. 
+    - [ret] is the return type of the match, which may depend on [indices] and [x]. *)
+Definition mk_pred (ctx : NamedCtx.t) (params : list term) (indices : list ident) (x : ident) (ret : term) : predicate term :=
+  let args := x :: List.rev indices in
+  let names := List.map (NamedCtx.get_name ctx) args in 
+  {| puinst := [] ; pparams := params ; pcontext := names ; preturn := abstract0 args ret |}.
+
+(** [mk_branch ctx args body] creates a case branch.
+    - [args] are the arguments of the branch, ordered from first to last.
+    - [body] is the body of the branch, which may depend on [args]. *)
+Definition mk_branch (ctx : NamedCtx.t) (args : list ident) (body : term) : branch term :=
+  let args := List.rev args in
+  let names := List.map (NamedCtx.get_name ctx) args in 
+  {| bcontext := names ; bbody := abstract0 args body |}.
+
+(*(** [mk_case ctx ind ind_body scrutinee pred branches] builds a tCase term.
     - [params] contains the parameters of the inductive, from first to last.
     - [scrutinee] is the term we are matching on.
     - [pred] is a function of the form [fun ind_indices => fun scrutinee => return_type].
@@ -220,7 +250,7 @@ Definition mk_case (ctx : NamedCtx.t) (ind : inductive) (ind_body : one_inductiv
     name_telescope n_args [] branch $ fun names body =>
       {| bcontext := names ;  bbody := body |}
   in 
-  tCase case_info pred scrutinee (map2 on_branch ind_body.(ind_ctors) branches).
+  tCase case_info pred scrutinee (map2 on_branch ind_body.(ind_ctors) branches).*)
 
 (*Inductive myind (A B C : Set) : nat -> A -> B -> Set :=
 | MyCtor : forall a b, C -> myind A B C 0 a b.
