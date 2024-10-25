@@ -1,10 +1,10 @@
+(** This file defines a minimalist locally nameless API for MetaCoq. *)
+
 From MetaCoq.Utils Require Import utils MCList.
 From MetaCoq.Template Require Import All.
 From Repr Require Import Utils.
 
 Import MCMonadNotation.
-
-(** This file defines a minimalist locally nameless API for MetaCoq. *)
 
 (** * Named Contexts. *)
 
@@ -56,12 +56,11 @@ Definition get_body (ctx : t) (id : ident) : option term :=
 
 End NamedCtx.
 
-(** * Extending named contexts. *)
+(** * Inspecting terms. *)
 
 (** [with_decl ctx decl k] generates a fresh identifier built from [decl.(decl_name)], 
     adds the declaration [decl] to [ctx] and executes the continuation [k]
     in this augmented environment.
-    
     It assumes [decl] contains no loose de Bruijn index. *)
 Definition with_decl {T} (ctx : NamedCtx.t) (decl : context_decl) (k : NamedCtx.t -> ident -> T) : T :=
   (* Create a fresh identifier. *)
@@ -76,7 +75,6 @@ Definition with_decl {T} (ctx : NamedCtx.t) (decl : context_decl) (k : NamedCtx.
   k (NamedCtx.push ctx id decl) id.
 
 (** [with_context] generalizes [with_decl] to a de Bruijn context. 
-
     Beware of the order of variables : 
     - in a [context], the most recent (i.e. innermost) variables are at the head of the list.
     - in the continuation, the most recent variables are at the end of the list.  *)
