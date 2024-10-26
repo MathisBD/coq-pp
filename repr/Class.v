@@ -28,4 +28,4 @@ Class Repr A : Type :=
 Definition repr {A : Type} `{Repr A} (a : A) := 
   (* We use a maximum character width of 80, which is standard for a text document.
      In the future we might want to make the width customizable. *)
-  @pp_string 80 (repr_doc a).
+  pp_string 80 (repr_doc a).

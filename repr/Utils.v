@@ -194,3 +194,24 @@ Definition instantiate (ids : list ident) (k : nat) (t : term) : term :=
 
 (** Specialization of [instantiate] to [k = 0]. *)
 Definition instantiate0 ids t := instantiate ids 0 t.
+
+(** [env_of_term ts] returns the global environment needed to type the terms in [ts]. 
+
+    This function is maybe slower than it should be (I use [merge_global_envs] a lot).
+    If performance becomes an issue you can try calling [tmQuoteRec] only once,
+    on the list of unquoted terms. I tried this approach but failed to deal
+    with the dependent typing and universe issues it caused (all the terms in [ts] might
+    have different types).
+*)
+Fixpoint env_of_terms (ts : list term) : TemplateMonad global_env :=
+  match ts with 
+  | [] => tmReturn empty_global_env
+  | t :: ts =>
+    (* Get the environment for [t]. *)
+    mlet t <- tmUnquote t ;;
+    mlet (t_env, _) <- tmQuoteRec (my_projT2 t) ;;
+    (* Get the environment for [ts]. *)
+    mlet ts_env <- env_of_terms ts ;;
+    (* Merge both envs. *)
+    tmReturn (merge_global_envs t_env ts_env)
+  end.

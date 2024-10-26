@@ -194,12 +194,14 @@ Definition with_ind_indices {T} (ctx : NamedCtx.t) (ind_body : one_inductive_bod
   let indices := map_context_with_binders S (subst $ List.rev params) 0 ind_body.(ind_indices) in
   with_context ctx indices k.
 
-(** [with_ctor_args ctx ctor_body params k] declares the arguments of the constructor [ctor_body] in the local context,
+(** [with_ctor_args ctx ind ctor_body params k] declares the arguments of the constructor [ctor_body] in the local context,
     and executes [k] with the extended context and arguments. 
     - [k] takes the arguments ordered from first to last.
+    - [ind] is the inductive this constructor belongs to.
     - [params] contains the parameters of the inductive, ordered from first to last. *)
-Definition with_ctor_args {T} (ctx : NamedCtx.t) (ctor_body : constructor_body) (params : list term) (k : NamedCtx.t -> list ident -> T) : T :=
-  let args := map_context_with_binders S (subst $ List.rev params) 0 ctor_body.(cstr_args) in
+Definition with_ctor_args {T} (ctx : NamedCtx.t) (ind : inductive) (ctor_body : constructor_body) (params : list term) (k : NamedCtx.t -> list ident -> T) : T :=
+  (* Recall that the constructor arguments can depend on the inductive and on its parameters. *)
+  let args := map_context_with_binders S (subst $ List.rev (tInd ind [] :: params)) 0 ctor_body.(cstr_args) in
   with_context ctx args k.
 
 (** * Constructing terms. *)
@@ -235,6 +237,24 @@ Definition mk_prods (ctx : NamedCtx.t) (ids : list ident) (body : term) : term :
   let ids := List.rev ids in 
   loop ids (abstract0 ids body).
       
+(** [mk_lets ctx [id_0; ... ; id_n] body] creates let-bindings 
+    [let id_0 := def_0 in ... let id_n := def_n in body]. 
+    
+    This assumes each [id_i] is declared in [ctx] and has a [decl_body]. *)
+Definition mk_lets (ctx : NamedCtx.t) (ids : list ident) (body : term) : term :=
+  let fix loop ids t :=
+    match ids with 
+    | [] => t
+    | id :: ids => 
+      let decl := NamedCtx.get_decl ctx id in
+      let d_ty := decl.(decl_type) in
+      let d_body := option_get (failwith "mk_lets") $ decl.(decl_body) in
+      loop ids $ tLetIn decl.(decl_name) (abstract0 ids d_body) (abstract0 ids d_ty) t
+    end
+  in 
+  let ids := List.rev ids in 
+  loop ids (abstract0 ids body).
+    
 (** [mk_pred ctx params indices x ret] creates a case predicate. 
     - [params] are the parameters of the inductive, ordered from first to last. 
     - [indices] are the indices of the inductive, ordered from first to last. 
@@ -252,3 +272,16 @@ Definition mk_branch (ctx : NamedCtx.t) (args : list ident) (body : term) : bran
   let args := List.rev args in
   let names := List.map (NamedCtx.get_name ctx) args in 
   {| bcontext := names ; bbody := abstract0 args body |}.
+
+(** [mk_fix ctx id rarg body] creates a single fixpoint (not mutually recursive). 
+    - [id] is the identifier of the fixpoint parameter. 
+    - [rarg] is the index of the recursive argument of the fixpoint (starting at 0). 
+    - [body] is the body of the fixpoint, which can contain [id]. *)
+Definition mk_fix (ctx : NamedCtx.t) (id : ident) (rec_arg_idx : nat) (body : term) : term :=
+  let def := 
+    {| dname := NamedCtx.get_name ctx id 
+    ;  dtype := NamedCtx.get_type ctx id 
+    ;  dbody := abstract0 [id] body 
+    ;  rarg := rec_arg_idx |}
+  in 
+  tFix [def] 0.
