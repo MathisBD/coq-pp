@@ -36,6 +36,9 @@ Record t := mk
 (** The empty named context. *)
 Definition empty : t := {| decls := [] ; seed := 0 |}.
 
+(** [size ctx] counts the number of declarations in [ctx]. *)
+Definition size (ctx : t) : nat := List.length ctx.(decls).
+
 (** Add a declaration to the context, shadowing previous declarations with the same identifier. *)
 Definition push (ctx : t) (id : ident) (decl : context_decl) : t := 
   {| decls := (id, decl) :: ctx.(decls) ; seed := ctx.(seed) |}.
@@ -43,7 +46,7 @@ Definition push (ctx : t) (id : ident) (decl : context_decl) : t :=
 (** [fresh_ident basename ctx] builds a fresh identifier from [basename].
     It should be distinct from any other identifier constructed this way using [ctx]. *)
 Definition fresh_ident (ctx : t) (basename : string) : ident * t :=
-  let id := (basename ++ "#" ++ MCString.string_of_nat ctx.(seed))%bs in
+  let id := (basename ++ "__" ++ MCString.string_of_nat ctx.(seed))%bs in
   let ctx := {| decls := ctx.(decls) ; seed := ctx.(seed) + 1 |} in
   (id, ctx).
 
@@ -72,6 +75,17 @@ Definition mk_decl (name : string) (ty : term) : context_decl :=
   ;  decl_type := ty
   ;  decl_body := None |}.
 
+(** [fresh_evar ctx] generates a term representing a fresh evar in context [ctx]. *)
+Definition fresh_evar (ctx : NamedCtx.t) : term :=
+  let fix range n acc := 
+    match n with 
+    | 0 => acc
+    | S n => range n (n :: acc)
+    end
+  in 
+  let args := List.map tRel $ range (NamedCtx.size ctx) [] in
+  tEvar fresh_evar_id args.
+
 (** * Inspecting terms. *)
 
 (** [with_decl ctx decl k] generates a fresh identifier built from [decl.(decl_name)], 
@@ -89,6 +103,18 @@ Definition with_decl {T} (ctx : NamedCtx.t) (decl : context_decl) (k : NamedCtx.
   let (id, ctx) := NamedCtx.fresh_ident ctx basename in 
   (* Pass the identifier and extended context to the continuation. *)
   k (NamedCtx.push ctx id decl) id.
+
+(** [with_decls ctx [d_0; ... ; d_n] k] calls [with_decl] on [d_0] to [d_n] (in order).
+    The declarations [d_i] must contain no loose de Bruijn index.
+    A related but different variant is [with_context]. *)
+Fixpoint with_decls {T} (ctx : NamedCtx.t) (ds : list context_decl) (k : NamedCtx.t -> list ident -> T) : T :=
+  match ds with 
+  | [] => k ctx [] 
+  | d :: ds => 
+    with_decl ctx d $ fun ctx id =>
+    with_decls ctx ds $ fun ctx ids =>
+      k ctx (id :: ids)
+  end.
 
 (** [with_context] generalizes [with_decl] to a de Bruijn context. 
     Beware of the order of variables : 
@@ -184,22 +210,37 @@ Definition with_ctor_args {T} (ctx : NamedCtx.t) (ctor_body : constructor_body) 
 
 (** * Constructing terms. *)
 
-(** [mk_lambda ctx id body] creates the lambda abstraction [fun id => body].
-    This assumes [id] is declared in [ctx].
-   
+(** [mk_lambdas ctx [id_0; ... ; id_n] body] creates the lambda abstraction 
+    [fun id_0 ... id_n => body]. This assumes each [id_i] is declared in [ctx]. 
+    
     For instance here is how to create an identity function :
-      [mk_lambda ctx x (tVar x)]
-*)
-Definition mk_lambda (ctx : NamedCtx.t) (id : ident) (body : term) : term :=
-  let decl := NamedCtx.get_decl ctx id in 
-  tLambda decl.(decl_name) decl.(decl_type) $ abstract0 [id] body.
+      [mk_lambdas ctx [x] (tVar x)] *)
+Definition mk_lambdas (ctx : NamedCtx.t) (ids : list ident) (body : term) : term :=
+  let fix loop ids t :=
+    match ids with 
+    | [] => t
+    | id :: ids => 
+      let decl := NamedCtx.get_decl ctx id in
+      loop ids $ tLambda decl.(decl_name) (abstract0 ids decl.(decl_type)) t
+    end
+  in 
+  let ids := List.rev ids in 
+  loop ids (abstract0 ids body).
 
-(** [mk_prod ctx id body] creates the dependent product [forall id. body].
-    This assumes [id] is declared in [ctx]. *)
-Definition mk_prod (ctx : NamedCtx.t) (id : ident) (body : term) : term :=
-  let decl := NamedCtx.get_decl ctx id in
-  tProd decl.(decl_name) decl.(decl_type) $ abstract0 [id] body.
-
+(** [mk_prods ctx [id_0; ... ; id_n] body] creates the dependent product 
+    [forall id_0 ... id_n. body]. This assumes each [id_i] is declared in [ctx]. *)
+Definition mk_prods (ctx : NamedCtx.t) (ids : list ident) (body : term) : term :=
+  let fix loop ids t :=
+    match ids with 
+    | [] => t
+    | id :: ids => 
+      let decl := NamedCtx.get_decl ctx id in
+      loop ids $ tProd decl.(decl_name) (abstract0 ids decl.(decl_type)) t
+    end
+  in 
+  let ids := List.rev ids in 
+  loop ids (abstract0 ids body).
+      
 (** [mk_pred ctx params indices x ret] creates a case predicate. 
     - [params] are the parameters of the inductive, ordered from first to last. 
     - [indices] are the indices of the inductive, ordered from first to last. 

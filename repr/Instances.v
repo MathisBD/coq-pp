@@ -12,6 +12,7 @@ From Repr Require Import Class Utils.
 
 Import ListNotations.
 Open Scope string_scope.
+Generalizable Variables A B C.
 
 (** Representation of booleans. *)
 (* DERIVE *)
@@ -25,7 +26,7 @@ Instance repr_string : Repr string :=
 { repr_doc s := str """" ^^ str s ^^ str """" }.
 
 (** Representation of binary products. *)
-Instance repr_prod {A B : Type} `{Repr A} `{Repr B} : Repr (A * B) :=
+Instance repr_prod `{Repr A} `{Repr B} : Repr (A * B) :=
 {
   repr_doc '(a, b) := 
     let contents := repr_doc a ^^ str "," ^^ break 1 ^^ repr_doc b in
@@ -34,7 +35,7 @@ Instance repr_prod {A B : Type} `{Repr A} `{Repr B} : Repr (A * B) :=
 }.
 
 (** Representation of lists. *)
-Instance repr_list {A : Type} `{Repr A} : Repr (list A) :=
+Instance repr_list `{Repr A} : Repr (list A) :=
 {
   repr_doc l := 
     let contents := flow_map (str ";" ^^ break 1) repr_doc l in

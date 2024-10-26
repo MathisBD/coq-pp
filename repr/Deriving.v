@@ -9,21 +9,20 @@ From Repr Require Import Class Utils LocallyNameless Class.
 
 Import ListNotations MCMonadNotation.
 
-Inductive level : Type :=
-  | Infinity : level
-  | ExtremelyLongName : nat -> list nat -> nat -> list nat -> level
-  | Under : list nat * list nat -> level.
+(** Apply the constructor named [label] to a list of arguments [args]. *)
+Definition repr_ctor (label : string) (args : list (doc unit)) : doc unit :=
+  (*let res := separate (break 1) (str label :: args) in*)
+  let res := flow (break 1) (str label :: args) in
+  group (hang 4 res).
 
-(*
-Definition repr_doc_nat : nat -> doc unit :=
-  fun n => str (string_of_nat n).
-Definition inst := {| repr_doc := repr_doc_nat |}.
-Existing Instance inst.
-*)
-
-(** Metacoq terms corresponding to [nil] and [cons]. *)
+(** We quote some terms we will need later below. *)
+MetaCoq Quote Definition quoted_repr_doc := (@repr_doc).
+MetaCoq Quote Definition quoted_repr_ctor := (repr_ctor).
+MetaCoq Quote Definition quoted_doc_unit := (doc unit).
 MetaCoq Quote Definition quoted_nil := (@nil).
 MetaCoq Quote Definition quoted_cons := (@cons).
+MetaCoq Quote Definition quoted_Repr := (Repr).
+MetaCoq Quote Definition quoted_Build_Repr := (Build_Repr).
 
 (** [term_list ty xs] builds the term corresponding to the list [x1; ...; xn], 
     assuming each [xi] has type [ty]. *)
@@ -33,69 +32,51 @@ Fixpoint term_list (ty : term) (xs : list term) : term :=
   | x :: xs => mkApps quoted_cons [ty; x; term_list ty xs]
   end.
 
-(** Apply the constructor named [label] to a list of arguments [args]. *)
-Definition repr_ctor (label : string) (args : list (doc unit)) : doc unit :=
-  (*let res := separate (break 1) (str label :: args) in*)
-  let res := flow (break 1) (str label :: args) in
-  group (hang 4 res).
-
-(*MetaCoq Quote Definition repr_list := (fun (x : nat) (y : list nat) => _).*)
-(*    (fun l => match l with 
-    | Infinity => repr_ctor "" []
-    | ExtremelyLongName n ns m ms => repr_ctor "" [@repr_doc _ _ n; repr_doc ns; repr_doc m ; repr_doc ms]
-    | Under x => repr_ctor "" [repr_doc x]
-    end).*)
-
-(*MetaCoq Run (
-  tmBind 
-    (tmInferInstance None (Repr nat)) 
-    (fun x => tmPrint x)).*)
-
 (** Build a single argument. *)
-Definition build_arg ctx (arg : ident) : TemplateMonad term :=
-  (* Get the type of the argument. *)
-  let arg_ty := NamedCtx.get_type ctx arg in
-  mlet t_arg_ty <- tmUnquoteTyped Type arg_ty ;;
-  (* Get the corresponding [Repr] instance. This only works if the argument type is closed. *)
-  mlet t_inst <- tmInferInstance None (Repr t_arg_ty) ;;
-  match t_inst with
-  | my_None => tmFail "Could not infer Repr instance on constructor argument"%bs
-  | my_Some t_inst => 
-    mlet inst <- tmQuote t_inst ;; 
-    mlet rd <- tmQuote (@repr_doc) ;;
-    ret $ mkApps rd [arg_ty; inst; tVar arg]
-  end.
+Definition build_arg ctx (arg : ident) : term :=
+  (* I use an evar in place of the [Repr] instance, which will be solved when unquoting the term. *)
+  ret $ mkApps quoted_repr_doc [NamedCtx.get_type ctx arg; fresh_evar ctx; tVar arg].
 
 (** Build a branch for a single constructor. *)
-Definition build_branch ctx (params : list term) (ctor_body : constructor_body) : TemplateMonad (branch term) :=
-  (* Get the label of the constructor. *)
-  mlet label <- tmQuote =<< tmEval cbv (bytestring.String.to_string ctor_body.(cstr_name)) ;;
+Definition build_branch ctx (params : list term) (ctor_body : constructor_body) (quoted_ctor_name : term) : branch term :=
   (* Get the list of arguments of the constructor. *)
   with_ctor_args ctx ctor_body params $ fun ctx args =>
-    mlet repr_args <- monad_map (build_arg ctx) args ;;
-    (* Apply [repr_ctor] to the label and the arguments. *)
-    mlet rc <- tmQuote repr_ctor ;;
-    mlet doc_unit <- tmQuote (doc unit) ;;
-    ret $ mk_branch ctx args $ mkApps rc [label; term_list doc_unit repr_args].
+  (* Apply [repr_ctor] to the label and the arguments. *)
+  let repr_args := term_list quoted_doc_unit $ List.map (build_arg ctx) args in
+  mk_branch ctx args $ mkApps quoted_repr_ctor [quoted_ctor_name; repr_args].
 
 (** Derive the [repr_doc] function for an inductive type. *)
-Definition build_func ctx (ind : inductive) (ind_body : one_inductive_body) (params : list term) : TemplateMonad term :=
+Definition build_func ctx (ind : inductive) (ind_body : one_inductive_body) 
+  (params : list term) (ctor_names : list term) : term :=
   (* Declare the input parameter [x]. *)
   with_decl ctx (mk_decl "x"%bs $ mkApps (tInd ind []) params) $ fun ctx x =>  
   (* Case info. *)  
   let ci := {| ci_ind := ind ; ci_npar := List.length params ; ci_relevance := Relevant |} in
   (* Case predicate. *)
-  mlet doc_unit <- tmQuote (doc unit) ;;
   let pred := 
     with_ind_indices ctx ind_body params $ fun ctx indices =>
     with_decl ctx (mk_decl "x"%bs $ mkApps (tInd ind []) params) $ fun ctx x => 
-      mk_pred ctx params indices x doc_unit
+      mk_pred ctx params indices x quoted_doc_unit
   in
-  tmPrint =<< tmEval cbv pred ;;
   (* Case branches. *)
-  mlet branches <- monad_map (build_branch ctx params) ind_body.(ind_ctors) ;;
+  let branches := map2 (build_branch ctx params) ind_body.(ind_ctors) ctor_names in
   (* Bind the input parameter. *)
-  ret (mk_lambda ctx x $ tCase ci pred (tVar x) branches).
+  mk_lambdas ctx [x] $ tCase ci pred (tVar x) branches.
+
+Definition build_inst ctx (ind : inductive) (ind_body : one_inductive_body) (ctor_names : list term) : term :=
+  (* Declare the parameters of the inductive. *)
+  with_ind_params ctx ind_body $ fun ctx params =>  
+  (* Declare a [Repr] instance for each parameter. *)
+  let repr_decls := 
+    List.map (fun p => mk_decl "H"%bs $ mkApp quoted_Repr $ tVar p) params 
+  in
+  with_decls ctx repr_decls $ fun ctx param_insts =>
+  (* Build the [repr_doc] function. *)
+  let f := build_func ctx ind ind_body (List.map tVar params) ctor_names in
+  (* Package it in a [Repr] record. *)
+  let record := mkApps quoted_Build_Repr [tInd ind []; f] in
+  (* Abstract over the parameters and repr instances. *)
+  mk_lambdas ctx (List.app params $ param_insts) record.
 
 (** [env_of_term ts] returns the global environment needed to type the terms in [ts]. 
 
@@ -131,22 +112,28 @@ Definition derive (ind : inductive) : TemplateMonad unit :=
     | Some (_, ind_body) => ret ind_body 
     end 
   ;;
-  (* Derive the [repr_doc] function. *)
-  mlet func <- build_func NamedCtx.empty ind ind_body [] ;;
-  tmPrint =<< tmEval cbv (print_term (env, Monomorphic_ctx) [] true func) ;;
-  (* Package it in a [Repr] intance. *)
-  let repr_ind := {| inductive_mind := (MPfile ["Class"%bs ; "Repr"%bs], "Repr"%bs); inductive_ind := 0 |} in
-  let instance := mkApps (tConstruct repr_ind 0 []) [tInd ind []; func] in
+  (* Quote the constructor names. *)
+  mlet ctor_names <- 
+    monad_map 
+      (fun c => tmQuote =<< tmEval cbv (bytestring.String.to_string c.(cstr_name))) 
+      ind_body.(ind_ctors)
+  ;;
+  (* Derive the [Repr] instance. *)
+  let instance := build_inst NamedCtx.empty ind ind_body ctor_names in
+  tmPrint =<< tmEval cbv (print_term (env, Monomorphic_ctx) [] true instance) ;;
   (* Add the instance to the global environment. *)
-  tmMkDefinition "repr_boption"%bs instance.
+  tmMkDefinition "repr_derive"%bs instance.
   
 Instance repr_bool : Repr bool :=
 { repr_doc b := if b then str "true" else str "false" }.
 
 Inductive bool_option := 
-  | BNone : bool_option
-  | BSome : bool -> bool_option.
+  | B1 : bool_option
+  | B2 : bool -> bool_option.
 
+Inductive myind (A B : Type) : Type := 
+  | MyConstr : bool -> A -> B -> myind A B.
+  
 Definition bool_ind := {|
   inductive_mind :=
     (MPfile ["Datatypes"%bs; "Init"%bs; "Coq"%bs], "bool"%bs);
@@ -160,18 +147,30 @@ Definition boption_ind := {|
   inductive_mind := (MPfile ["Deriving"%bs], "bool_option"%bs);
   inductive_ind := 0
 |}.
+Definition myind_ := {|
+  inductive_mind := (MPfile ["Deriving"%bs], "myind"%bs);
+  inductive_ind := 0
+|}.
 
-(*MetaCoq Test Quote (fun x =>
-  match b with 
-  | true => str "true"
-  | false => str "false"
-  end).*)
+Time MetaCoq Run (derive myind_).
+Print repr_derive.
 
-MetaCoq Run (derive boption_ind).
-Print repr_boption.
-Existing Instance repr_bool.
 
-Eval compute in repr true.
+MetaCoq Quote Definition rd := @repr_doc.
+MetaCoq Quote Definition b := bool.
+
+
+
+MetaCoq Test Unquote (tApp rd [b; tEvar fresh_evar_id []]).
+
+Check (@repr_doc bool _).
+
+MetaCoq Test Unquote 
+  (tLambda 
+    {| binder_name := nAnon ; binder_relevance := Relevant |}
+    t_nat 
+    (tEvar fresh_evar_id [tRel 0])).
+
 
 
 (*Record color := { red : list nat * list nat ; green : list nat ; blue : list nat }. 
