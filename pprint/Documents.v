@@ -2,7 +2,8 @@ From Coq Require Import List String Strings.Byte Ascii.
 Import ListNotations.
 
 (** This module implements a pretty-printing combinator library. 
-    It is based on François Pottier's Pprint library : https://github.com/fpottier/pprint.
+    The combinators are based on François Pottier's Pprint library : 
+    https://github.com/fpottier/pprint, but the rendering engine is different.
 
     It has the particularity of printing documents that can contain *annotated* text : 
     we can box pieces of text in an annotation of any type. 
@@ -14,7 +15,6 @@ Import ListNotations.
     Annotations have no effect on text layout : to print to plain text
     we can simply ignore all annotations.
 *)
-
 
 
 (* TODO : explain the two modes (flattening and normal). *)

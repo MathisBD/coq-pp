@@ -10,23 +10,23 @@ Set Universe Polymorphism.
 (** The rendering engine does not output strings directly : it is parametric over
     a pretty-printing monad, which provides a low-level output interface.
    
-    The job of the pretty-printing monad is to :
-    - accumulate characters and strings ([add_string]).
-    - deal with annotations ([enter_annot], [exit_annot]). 
+    [MonadPPrint Ann M] states that [M] is a monad which supports pretty-printing documents
+    with annotations of type [Ann]. The job of [M] is to :
+    - accumulate strings : [add_string].
+    - deal with annotations of type [Ann] : [enter_annot], [exit_annot]. 
 
     Annotations can be nested. For instance :
-      [enter_annot A1 ;; add_string "hello" ;; enter_annot A2 ;; add_string "world" ;; exit_annot A2 ;; exit_annot A1]
-    will print "hello" with annotation [A1] followed by "world" with annotation [A2].
+      [enter_annot a1 ;; add_string "hello" ;; 
+       enter_annot a2 ;; add_string "world" ;; 
+       exit_annot a2 ;; exit_annot a1]
+    will print "hello" with annotation [a1] followed by "world" with annotation [a2].
     Calls to [enter_annot]/[exit_annot] are always well-parenthesized.
 *)
-Class MonadPPrint (M : Type -> Type) :=
+Class MonadPPrint (Ann : Type) (M : Type -> Type) :=
 {
-  (*** The type of annotations supported by this monad. *)
-  annot : Type ;
-
   add_string : string -> M unit ;
-  enter_annot : annot -> M unit ;
-  exit_annot : annot -> M unit ;
+  enter_annot : Ann -> M unit ;
+  exit_annot : Ann -> M unit ;
 }.
 
 (** * Rendering a document. *)
@@ -43,7 +43,7 @@ Definition make_string (n : nat) (c : Ascii.ascii) : string :=
 
 Section Rendering.
 (** The rendering engine is parameterized by a pretty printing monad. *)
-Context {M : Type -> Type} {MonadM : Monad M} {MonadPPrintM : MonadPPrint M}.
+Context {Ann : Type} {M : Type -> Type} {MonadM : Monad M} {MonadPPrintM : MonadPPrint Ann M}.
 
 (** [prettyM doc flat width indent col] is the main function in the rendering engine :
     - [doc] is the document we are printing.
@@ -57,7 +57,7 @@ Context {M : Type -> Type} {MonadM : Monad M} {MonadPPrintM : MonadPPrint M}.
     I would have to define a [MonadTailRec] class (as in PureScript for instance),
     and require a [MonadTailRec] instance on the pretty printing monad [M].
 *)
-Fixpoint prettyM (doc : doc annot) (flat : bool) (width indent col : nat) : M nat :=
+Fixpoint prettyM (doc : doc Ann) (flat : bool) (width indent col : nat) : M nat :=
   match doc with
   | Empty => ret col
   | Str len s => add_string s ;; ret (col + len)
@@ -99,15 +99,18 @@ Fixpoint prettyM (doc : doc annot) (flat : bool) (width indent col : nat) : M na
 
 (** [pp width doc] pretty-prints the document [doc],
     using a maximum character width of [width]. *)
-Definition ppM {width : nat} doc : M unit :=
+Definition ppM (width : nat) doc : M unit :=
   prettyM doc false width 0 0 ;; ret tt.
 
 End Rendering.
 
 (** * Basic MonadPPrint instance. *)
 
+(** [PPString A] is a monad that supports pretty-printing documents to strings,
+    and simply ignores annotations. *)
 Definition PPString A := list string -> A * list string.
 
+(** Monad instance. *)
 Instance monad_ppstring : Monad PPString :=
 {
   ret _ x ls := (x, ls) ;
@@ -116,14 +119,16 @@ Instance monad_ppstring : Monad PPString :=
     mf x ls
 }.
 
-Instance monad_pprint_ppstring : MonadPPrint PPString :=
+(** MonadPPrint instance. This works for any annotation type [Ann]. *)
+Instance monad_pprint_ppstring {Ann : Type} : MonadPPrint Ann PPString :=
 {
-  annot := unit ;
   add_string s ls := (tt, s :: ls) ;
   enter_annot _ := ret tt ;
   exit_annot _ := ret tt
 }.
 
-Definition pp_string {width : nat} doc : string :=
-  let '(_, output) := @ppM PPString _ monad_pprint_ppstring width doc [] in
+(** [pp_string width d] pretty-prints the document [d] to a string, 
+    ignoring all annotations. *)
+Definition pp_string {Ann} (width : nat) (d : doc Ann) : string :=
+  let '(_, output) := @ppM Ann PPString _ monad_pprint_ppstring width d [] in
   List.fold_left String.append (List.rev output) EmptyString.
