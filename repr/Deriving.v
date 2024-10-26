@@ -1,7 +1,7 @@
 (** This file implements a Coq command that automatically derives [Repr] instances
     for inductives and records. *)
 
-From MetaCoq.Template Require Import All Pretty.
+From MetaCoq.Template Require Import All.
 From MetaCoq.Utils Require Import monad_utils.
 From Coq Require Import List String.
 From PPrint Require Import All.
@@ -9,13 +9,37 @@ From Repr Require Import Class Utils LocallyNameless Class.
 
 Import ListNotations MCMonadNotation.
 
-(** Apply the constructor named [label] to a list of arguments [args]. *)
+
+(** Pretty-print the application of constructor [label] to a list of arguments [args]. *)
 Definition repr_ctor (label : string) (args : list (doc unit)) : doc unit :=
   (*let res := separate (break 1) (str label :: args) in*)
   let res := flow (break 1) (str label :: args) in
   group (hang 4 res).
 
-(** We quote some terms we will need later below. *)
+Inductive tree A :=
+  | Leaf : tree A
+  | Node : A -> tree A -> tree A -> tree A.
+
+Definition repr_tree (A : Type) (RA : Repr A) : Repr (tree A) :=
+  Build_Repr (tree A) $ 
+    fix f (xs : tree A) : doc unit :=
+      let _ := Build_Repr (tree A) f in 
+      match xs with 
+      | Leaf => repr_ctor "Leaf" []
+      | Node x l r => repr_ctor "Node" [repr_doc x; repr_doc l; repr_doc r]
+      end.
+
+Instance : Repr bool := { repr_doc b := if b then str "true" else str "false" }.
+Existing Instance repr_tree.
+
+Arguments Leaf {A}.
+Arguments Node {A}.
+
+Eval compute in repr $ Node true Leaf (Node false Leaf Leaf).
+
+
+
+(** Quote some terms that we will need below. *)
 MetaCoq Quote Definition quoted_repr_doc := (@repr_doc).
 MetaCoq Quote Definition quoted_repr_ctor := (repr_ctor).
 MetaCoq Quote Definition quoted_doc_unit := (doc unit).
@@ -125,7 +149,7 @@ Definition derive (ind : inductive) : TemplateMonad unit :=
   (* Add the instance to the global environment and register it as an instance. *)
   tmMkDefinition "repr_derive"%bs instance.
   
-Instance repr_bool : Repr bool :=
+(*Instance repr_bool : Repr bool :=
 { repr_doc b := if b then str "true" else str "false" }.
 
 Inductive bool_option := 
@@ -152,6 +176,8 @@ Definition myind_ := {|
   inductive_mind := (MPfile ["Deriving"%bs], "myind"%bs);
   inductive_ind := 0
 |}.
+
+Search "evar".
 
 MetaCoq Run (derive myind_).
 Print repr_derive.

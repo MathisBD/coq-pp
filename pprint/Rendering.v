@@ -1,66 +1,35 @@
-From Coq Require Import Strings.String.
-From Coq Require Import Strings.Ascii.
-From PPrint Require Import Documents.
+From Coq Require Import String Ascii List.
+From PPrint Require Import Monad Documents.
+Import ListNotations.
+Open Scope monad_scope.
 
-(** * Backends. *)
+Set Universe Polymorphism.
+
+(** * Pretty-printing monads. *)
 
 (** The rendering engine does not output strings directly : it is parametric over
-    a backend, which provides a low-level output interface.
+    a pretty-printing monad, which provides a low-level output interface.
    
-    The job of the backend is to :
+    The job of the pretty-printing monad is to :
     - accumulate characters and strings ([add_string]).
     - deal with annotations ([enter_annot], [exit_annot]). 
 
-    I chose to represent a backend as a simple state machine :
-    - [initial_state] is the initial state.
-    - various functions such as [add_char] or [enter_annot] modify the state.
-    - [get_output] extracts the actual output (usually a string) from the state.
-    This representation is simple yet seems to be general enough in practice.
-
     Annotations can be nested. For instance :
-      [enter_annot A1 ; add_string "hello" ; enter_annot A2 ; add_string "world" ; exit_annot A2 ; exit_annot A1]
+      [enter_annot A1 ;; add_string "hello" ;; enter_annot A2 ;; add_string "world" ;; exit_annot A2 ;; exit_annot A1]
     will print "hello" with annotation [A1] followed by "world" with annotation [A2].
     Calls to [enter_annot]/[exit_annot] are always well-parenthesized.
 *)
-Module Type Backend.
+Class MonadPPrint (M : Type -> Type) :=
+{
+  (*** The type of annotations supported by this monad. *)
+  annot : Type ;
 
-(** The output type of this backend. 
-    Usually this is [string], but it could also be some kind of HTML data-structure. *)
-Parameter output : Type.
+  add_string : string -> M unit ;
+  enter_annot : annot -> M unit ;
+  exit_annot : annot -> M unit ;
+}.
 
-(** The type of annotations supported by this backend.
-    Basic examples could be :
-    - [Inductive annot := Bold | Italic | Underline.] to support bold, italic or underlined text.
-    - [Record annot := { red : nat ; green : nat ; blue : nat}.] to add color to your text. 
-*)
-Parameter annot : Type.
-
-(** The internal state maintainted by the backend. 
-    This is implementation-specific. *)
-Parameter state : Type.
-  
-(** The initial state. *)
-Parameter init_state : state.
-
-(** Extract the output from a state. *)
-Parameter get_output : state -> output.
-
-(** Add a string. *)
-Parameter add_string : string -> state -> state.
-
-(** Enter an annotation : all characters and strings added between [enter_annot] and 
-    the matching [exit_annot] should have the annotation [annot] applied to them. *)
-Parameter enter_annot : annot -> state -> state.
-
-(** Exit an annotation. The [annot] argument is the same as in the corresponding [enter_annot]. *)
-Parameter exit_annot : annot -> state -> state.
-  
-End Backend.
-  
-(** * Rendering a document to a backend. *)
-
-(** The rendering engine is parametric over a backend. *)
-Module Make (B : Backend).
+(** * Rendering a document. *)
 
 (** [make_string n c] makes a string of length [n] filled with the character [c]. *)
 Definition make_string (n : nat) (c : Ascii.ascii) : string :=
@@ -72,39 +41,42 @@ Definition make_string (n : nat) (c : Ascii.ascii) : string :=
   in 
   loop n EmptyString.
 
-(** [pretty doc flat width indent col st] is the main function in the rendering engine :
+Section Rendering.
+(** The rendering engine is parameterized by a pretty printing monad. *)
+Context {M : Type -> Type} {MonadM : Monad M} {MonadPPrintM : MonadPPrint M}.
+
+(** [prettyM doc flat width indent col] is the main function in the rendering engine :
     - [doc] is the document we are printing.
     - [flat] is [true] if we are in flat mode, otherwise it is [false].
     - [width] is the maximum character width we are allowed to use.
     - [indent] is the current indentation level : [indent] blank characters are added after each newline.
     - [col] is the current column index, starting at 0.
-    - [st] is the backend state.
+    The return value contains the updated column index.
 
-    As documents can become quite big, we are careful to write this function in tail-recursive style.
-    The continuation is passed : 
-    - the resulting column index.
-    - the resulting backend state.
+    Making this function tail recursive would require a bit more work.
+    I would have to define a [MonadTailRec] class (as in PureScript for instance),
+    and require a [MonadTailRec] instance on the pretty printing monad [M].
 *)
-Fixpoint pretty {T} (doc : doc B.annot) (flat : bool) (width indent col : nat) (state : B.state) (k : nat -> B.state -> T) : T :=
+Fixpoint prettyM (doc : doc annot) (flat : bool) (width indent col : nat) : M nat :=
   match doc with
-  | Empty => k col state
-  | Str len s => k (col + len) (B.add_string s state)
-  | Blank n => k (col + n) (B.add_string (make_string n " "%char) state)
-  | HardLine =>
-      (* We should be in normal mode here. *)
-      let state := B.add_string (make_string 1 "010"%char) state in
-      let state := B.add_string (make_string indent " "%char) state in
-      k indent state
+  | Empty => ret col
+  | Str len s => add_string s ;; ret (col + len)
+  | Blank n => add_string (make_string n " "%char) ;; ret (col + n)
+  | HardLine => 
+    (* We should be in normal mode here. *)
+    add_string (make_string 1 "010"%char) ;; 
+    add_string (make_string indent " "%char) ;;
+    ret indent
   | IfFlat doc1 doc2 =>
       (* Print [doc1] or [doc2] depending on the current mode. *)
-      pretty (if flat then doc1 else doc2) flat width indent col state k
+      prettyM (if flat then doc1 else doc2) flat width indent col
   | Cat _ doc1 doc2 =>
-      (* Print [doc1] followed by [doc2]. *)
-      pretty doc1 flat width indent col state (fun col state =>
-        pretty doc2 flat width indent col state k)
+      (* Print [doc1] followed by [doc2], threading the column index. *)
+      bind (prettyM doc1 flat width indent col) (fun col =>
+        prettyM doc2 flat width indent col)
   | Nest _ n doc => 
       (* Simply increase the indentation amount. *)
-      pretty doc flat width (indent + n) col state k
+      prettyM doc flat width (indent + n) col
   | Group req doc =>
       (* Determine if [doc] should be flattened. *)
       let doc_flat := 
@@ -114,19 +86,44 @@ Fixpoint pretty {T} (doc : doc B.annot) (flat : bool) (width indent col : nat) (
         end
       in
       (* Take care to stay in flattening mode if we are already in it. *)
-      pretty doc (flat || doc_flat) width indent col state k
+      prettyM doc (flat || doc_flat) width indent col
   | Align _ doc => 
       (* Set the indentation amount to the current column. *)
-      pretty doc flat width col col state k
+      prettyM doc flat width col col
   | Annot _ ann doc =>
-      let state := B.enter_annot ann state in
-      pretty doc flat width indent col state (fun col state =>
-        let state := B.exit_annot ann state in k col state)
+      enter_annot ann ;;
+      mlet col <- prettyM doc flat width indent col ;;
+      exit_annot ann ;;
+      ret col
   end.
 
-(** [pp width doc] pretty-prints the document [doc] to the backend,
+(** [pp width doc] pretty-prints the document [doc],
     using a maximum character width of [width]. *)
-Definition pp `{width : nat} doc : B.output :=
-  pretty doc false width 0 0 B.init_state (fun _ state => B.get_output state).
+Definition ppM {width : nat} doc : M unit :=
+  prettyM doc false width 0 0 ;; ret tt.
 
-End Make.
+End Rendering.
+
+(** * Basic MonadPPrint instance. *)
+
+Definition PPString A := list string -> A * list string.
+
+Instance monad_ppstring : Monad PPString :=
+{
+  ret _ x ls := (x, ls) ;
+  bind _ _ mx mf ls :=
+    let (x, ls) := mx ls in
+    mf x ls
+}.
+
+Instance monad_pprint_ppstring : MonadPPrint PPString :=
+{
+  annot := unit ;
+  add_string s ls := (tt, s :: ls) ;
+  enter_annot _ := ret tt ;
+  exit_annot _ := ret tt
+}.
+
+Definition pp_string {width : nat} doc : string :=
+  let '(_, output) := @ppM PPString _ monad_pprint_ppstring width doc [] in
+  List.fold_left String.append (List.rev output) EmptyString.

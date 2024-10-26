@@ -2,12 +2,10 @@ From Coq Require Import String.
 From Coq Require Import List.
 Import ListNotations.
 
-(** Export the document combinators. *)
 From PPrint Require Export Documents.
-(** Export the rendering engine. *)
 From PPrint Require Export Rendering.
 
-(** * Default backend. *)
+(*(** * Default backend. *)
 
 (** For convenience, we instantiate the rendering engine on a basic string backend.
     This backend outputs strings and does not support any annotations. *)
@@ -29,4 +27,4 @@ Definition get_output st : string := List.fold_left String.append (List.rev st) 
 End StringBackend.
 
 (** To render a document of type [doc unit] to a string, use [PpString.pp]. *)
-Module PpString := Make StringBackend.
+Module PpString := Make StringBackend.*)

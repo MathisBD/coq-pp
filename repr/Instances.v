@@ -8,7 +8,7 @@
 
 From Coq Require Import List String.
 From PPrint Require Import All.
-From Repr Require Import Class Utils.
+From Repr Require Import Class Utils Deriving.
 
 Import ListNotations.
 Open Scope string_scope.
