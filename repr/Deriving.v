@@ -74,7 +74,7 @@ Definition build_inst ctx (ind : inductive) (ind_body : one_inductive_body) (cto
   (* Build the [repr_doc] function. *)
   let f := build_func ctx ind ind_body (List.map tVar params) ctor_names in
   (* Package it in a [Repr] record. *)
-  let record := mkApps quoted_Build_Repr [tInd ind []; f] in
+  let record := mkApps quoted_Build_Repr [mkApps (tInd ind []) $ List.map tVar params; f] in
   (* Abstract over the parameters and repr instances. *)
   mk_lambdas ctx (List.app params $ param_insts) record.
 
@@ -120,8 +120,9 @@ Definition derive (ind : inductive) : TemplateMonad unit :=
   ;;
   (* Derive the [Repr] instance. *)
   let instance := build_inst NamedCtx.empty ind ind_body ctor_names in
-  tmPrint =<< tmEval cbv (print_term (env, Monomorphic_ctx) [] true instance) ;;
-  (* Add the instance to the global environment. *)
+  tmPrint =<< tmEval cbv instance ;;
+  (*tmPrint =<< tmEval cbv (print_term (env, Monomorphic_ctx) [] true instance) ;;*)
+  (* Add the instance to the global environment and register it as an instance. *)
   tmMkDefinition "repr_derive"%bs instance.
   
 Instance repr_bool : Repr bool :=
@@ -152,7 +153,7 @@ Definition myind_ := {|
   inductive_ind := 0
 |}.
 
-Time MetaCoq Run (derive myind_).
+MetaCoq Run (derive myind_).
 Print repr_derive.
 
 
@@ -194,46 +195,6 @@ Instance reprColor : Repr color :=
     group (align res)
 }.
 
-Fixpoint range n : list nat := 
-  match n with 
-  | 0 => []
-  | S n => S n :: range n
-  end.
-
-Inductive level : Type :=
-  | Infinity : level
-  | ExtremelyLongName : nat -> list nat -> nat -> list nat -> level
-  | Under : list nat * list nat -> level.
-
-Definition repr_constr (label : string) (args : list (doc unit)) : doc unit :=
-  (*let res := separate (break 1) (str label :: args) in*)
-  let res := flow (break 1) (str label :: args) in
-  group (hang 4 res).
-  
-Instance reprLevel : Repr level :=
-{
-  repr_doc l := 
-    match l with 
-    | Infinity => repr_constr "Infinity" []
-    | ExtremelyLongName n ns m ms => repr_constr "ExtremelyLongName" [repr_doc n; repr_doc ns; repr_doc m ; repr_doc ms]
-    | Under x => repr_constr "Under" [repr_doc x]
-    end
-}.
-
-Definition l_small := ExtremelyLongName 4 [42; 41] 0 [].
-Definition l_large := ExtremelyLongName 42 (range 42) 0 (range 25).
-
-Eval compute in l_large.
-
-Eval compute in repr l_large.
-
-Check 
-ExtremelyLongName 42
-  [42; 41; 40; 39; 38; 37; 36; 35; 34; 33; 32; 31; 30; 29; 28; 27; 26; 25; 24;
-   23; 22; 21; 20; 19; 18; 17; 16; 15; 14; 13; 12; 11; 10; 9; 8; 7; 6; 5; 4; 3;
-   2; 1] 0
-  [25; 24; 23; 22; 21; 20; 19; 18; 17; 16; 15; 14; 13; 12; 11; 10; 9; 8; 7; 6; 5;
-   4; 3; 2; 1].
 
 Definition c_small := {| red := (range 2, range 0) ; green := range 3 ; blue := range 2 |}.
 Definition c_large := {| red := (range 42, range 42) ; green := range 6 ; blue := range 2 |}.

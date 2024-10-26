@@ -77,13 +77,7 @@ Definition mk_decl (name : string) (ty : term) : context_decl :=
 
 (** [fresh_evar ctx] generates a term representing a fresh evar in context [ctx]. *)
 Definition fresh_evar (ctx : NamedCtx.t) : term :=
-  let fix range n acc := 
-    match n with 
-    | 0 => acc
-    | S n => range n (n :: acc)
-    end
-  in 
-  let args := List.map tRel $ range (NamedCtx.size ctx) [] in
+  let args := List.map (fun '(id, _) => tVar id) (NamedCtx.decls ctx) in
   tEvar fresh_evar_id args.
 
 (** * Inspecting terms. *)
@@ -258,65 +252,3 @@ Definition mk_branch (ctx : NamedCtx.t) (args : list ident) (body : term) : bran
   let args := List.rev args in
   let names := List.map (NamedCtx.get_name ctx) args in 
   {| bcontext := names ; bbody := abstract0 args body |}.
-
-(*(** [mk_case ctx ind ind_body scrutinee pred branches] builds a tCase term.
-    - [params] contains the parameters of the inductive, from first to last.
-    - [scrutinee] is the term we are matching on.
-    - [pred] is a function of the form [fun ind_indices => fun scrutinee => return_type].
-    - each branch is a function of the form [fun ctor_args => branch_body]. *)
-Definition mk_case (ctx : NamedCtx.t) (ind : inductive) (ind_body : one_inductive_body) (params : list term) 
-  (scrutinee : term) (pred : term) (branches : list term) : term :=
-  (* [name_telescope n [] t k] peels off the lambdas in head position in [t],
-     and passes the names of the bound variables and the body to [k].
-     - the body is raw (it contains loose de Bruijn indices). 
-     - the names are ordered from innermost to outermost.
-     This performs no substitutions and is thus more efficient than [lambda_telescope_n]. *)
-  let fix name_telescope {T} n names t (k : list aname -> term -> T) : T :=
-    match n, t with 
-    | S n, tLambda name _ t => name_telescope n (name :: names) t k
-    | _, t => k names t
-    end
-  in 
-  (* Case info. *)
-  let case_info := {| ci_ind := ind ; ci_npar := ind_param_count ind_body ; ci_relevance := Relevant |} in
-  (* Case predicate. *)
-  let pred := 
-    let n_indices := List.length ind_body.(ind_indices) in
-    name_telescope (S n_indices) [] pred $ fun names ret =>
-      {| puinst := [] ; pparams := params ; pcontext := names ; preturn := ret |}
-  in
-  (* Case branches. *)
-  let on_branch ctor_body branch :=
-    let n_args := List.length ctor_body.(cstr_args) in 
-    name_telescope n_args [] branch $ fun names body =>
-      {| bcontext := names ;  bbody := body |}
-  in 
-  tCase case_info pred scrutinee (map2 on_branch ind_body.(ind_ctors) branches).*)
-
-(*Inductive myind (A B C : Set) : nat -> A -> B -> Set :=
-| MyCtor : forall a b, C -> myind A B C 0 a b.
-
-Definition test : TemplateMonad unit :=
-mlet (env, t) <- tmQuoteRec myind ;;
-mlet ind_body <- 
-  match t with 
-  | tInd ind _ =>
-    match lookup_inductive env ind with 
-    | Some (_, ind_body) => ret ind_body
-    | _ => tmFail "Could not lookup inductive"
-    end
-  | _ => tmFail "Not an inductive"
-  end
-;;
-mlet ctor_body <- 
-  match ind_body.(ind_ctors) with 
-  | [ ctor_body ] => ret ctor_body 
-  | _ => tmFail "Invalid number of constructors"
-  end
-;;
-let ctx := NamedCtx.empty in
-with_ind_params ctx ind_body $ fun ctx params =>
-with_ind_indices ctx ind_body (List.map tVar params) $ fun ctx indices =>
-  tmPrint =<< tmEval cbv (List.map (fun a => NamedCtx.get_decl a ctx) indices).
-
-MetaCoq Run test.*)
