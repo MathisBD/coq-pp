@@ -20,4 +20,5 @@
  (depends
   (coq
    (>= 8.20.0))
-  coq-metacoq-template))
+  coq-metacoq-template
+  coq-reduction-effects))

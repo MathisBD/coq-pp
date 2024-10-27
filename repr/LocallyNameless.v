@@ -121,12 +121,12 @@ Definition with_context {T} (ctx : NamedCtx.t) (decls : context) (k : NamedCtx.t
     | [] => k ctx $ List.rev ids
     | d :: decls => 
       (* Don't forget to instantiate the loose de Bruijn indices in the local declaration [d]. *)
-      with_decl ctx (map_decl (instantiate0 $ List.rev ids) d) $ fun ctx id =>
+      with_decl ctx (map_decl (instantiate0 ids) d) $ fun ctx id =>
       loop ctx (id :: ids) decls
     end
   in 
   loop ctx [] $ List.rev decls.
-  
+
 (** [prod_telescope ctx (forall x1. ... forall xn. body) k] returns [k new_ctx [x1; ... ; xn]], 
     where [new_ctx] is [ctx] with bindings for the variables [x1] ... [xn]. 
     
@@ -183,14 +183,16 @@ Definition lambda_telescope_n {T} (ctx : NamedCtx.t) (n : nat) (t : term) (k : N
 (** [with_ind_params ctx ind_body k] declares the parameters of the inductive [ind_body] in the local context,
     and executes [k] with the extended context and parameters. 
     - [k] takes the parameters ordered from first to last. *)
-Definition with_ind_params {T} (ctx : NamedCtx.t) (ind_body : one_inductive_body) (k : NamedCtx.t -> list ident -> T) : T :=
+Definition with_ind_params {T} (ctx : NamedCtx.t) (ind_body : one_inductive_body) 
+  (k : NamedCtx.t -> list ident -> T) : T :=
   prod_telescope_n ctx (ind_param_count ind_body) ind_body.(ind_type) $ fun ctx params _ => k ctx params.
 
 (** [with_ind_indices ctx ind_body params k] declares the indices of the inductive [ind_body] in the local context,
     and executes [k] with the extended context and indices. 
     - [k] takes the indices ordered from first to last.
     - [params] contains the parameters of the inductive, ordered from first to last. *)
-Definition with_ind_indices {T} (ctx : NamedCtx.t) (ind_body : one_inductive_body) (params : list term) (k : NamedCtx.t -> list ident -> T) : T :=
+Definition with_ind_indices {T} (ctx : NamedCtx.t) (ind_body : one_inductive_body) 
+  (params : list term) (k : NamedCtx.t -> list ident -> T) : T :=
   let indices := map_context_with_binders S (subst $ List.rev params) 0 ind_body.(ind_indices) in
   with_context ctx indices k.
 
@@ -199,10 +201,21 @@ Definition with_ind_indices {T} (ctx : NamedCtx.t) (ind_body : one_inductive_bod
     - [k] takes the arguments ordered from first to last.
     - [ind] is the inductive this constructor belongs to.
     - [params] contains the parameters of the inductive, ordered from first to last. *)
-Definition with_ctor_args {T} (ctx : NamedCtx.t) (ind : inductive) (ctor_body : constructor_body) (params : list term) (k : NamedCtx.t -> list ident -> T) : T :=
+Definition with_ctor_args {T} (ctx : NamedCtx.t) (ind : inductive) (ctor_body : constructor_body) 
+  (params : list term) (k : NamedCtx.t -> list ident -> T) : T :=
   (* Recall that the constructor arguments can depend on the inductive and on its parameters. *)
   let args := map_context_with_binders S (subst $ List.rev (tInd ind [] :: params)) 0 ctor_body.(cstr_args) in
   with_context ctx args k.
+
+(** [with_ctor_indices ind ctor_body params k] gets the *value* of the indices of the constructor [ctor_body]
+    (recall that the constructor indices can depend on the inductive [ind] and on the parameters [params]).
+    - [k] takes the indices ordered from first to last.
+    - [ind] is the inductive this constructor belongs to.
+    - [params] contains the parameters of the inductive, ordered from first to last. *)
+Definition with_ctor_indices {T} (ind : inductive) (ctor_body : constructor_body) (params : list term) (k : list term -> T) : T :=
+  (* Recall that the construtor indices can depend on the inductive and on its parameters. *)
+  let indices := List.map (subst (List.rev (tInd ind [] :: params)) 0) ctor_body.(cstr_indices) in
+  k indices.
 
 (** * Constructing terms. *)
 
