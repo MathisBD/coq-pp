@@ -8,4 +8,5 @@
   MetaCoq.Utils
   Equations
   Equations.Prop
-  Ltac2))
+  Ltac2
+  ReductionEffect))

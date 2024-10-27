@@ -3,6 +3,7 @@
 From MetaCoq.Utils Require Import utils MCList.
 From MetaCoq.Template Require Import All.
 From Repr Require Import Utils.
+From ReductionEffect Require Import PrintingEffect.
 
 Import MCMonadNotation.
 
@@ -204,7 +205,9 @@ Definition with_ind_indices {T} (ctx : NamedCtx.t) (ind_body : one_inductive_bod
 Definition with_ctor_args {T} (ctx : NamedCtx.t) (ind : inductive) (ctor_body : constructor_body) 
   (params : list term) (k : NamedCtx.t -> list ident -> T) : T :=
   (* Recall that the constructor arguments can depend on the inductive and on its parameters. *)
+  let () := print ("arg_context_1", ctor_body.(cstr_args)) in
   let args := map_context_with_binders S (subst $ List.rev (tInd ind [] :: params)) 0 ctor_body.(cstr_args) in
+  let () := print ("arg_context_2", args) in
   with_context ctx args k.
 
 (** [with_ctor_indices ind ctor_body params k] gets the *value* of the indices of the constructor [ctor_body]

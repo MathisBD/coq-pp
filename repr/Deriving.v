@@ -6,6 +6,7 @@ From MetaCoq.Utils Require Import monad_utils.
 From Coq Require Import String List.
 From PPrint Require Import All.
 From Repr Require Import Class Utils LocallyNameless Class.
+From ReductionEffect Require Import PrintingEffect.
 
 Import ListNotations MCMonadNotation.
 Open Scope list_scope.
@@ -119,6 +120,7 @@ Definition build_arg ctx (arg : ident) : term :=
 Definition build_branch ctx (ind : inductive) (params : list term) (ctor_body : constructor_body) (quoted_ctor_name : term) : branch term :=
   (* Get the list of arguments of the constructor. *)
   with_ctor_args ctx ind ctor_body params $ fun ctx args =>
+  let () := print ("CTOR_ARGS", args, List.map (NamedCtx.get_type ctx) args) in
   (*with_ctor_indices ind ctor_body params $ fun ctor_indices =>*) 
   (* Apply [repr_ctor] to the label and the arguments. *)
   let repr_args := term_list quoted_doc_unit $ List.map (build_arg ctx) args in
@@ -181,18 +183,17 @@ Definition build_func ctx (ind : inductive) (ind_body : one_inductive_body) (cto
   let I := mkApps (tInd ind []) $ List.map tVar $ params ++ indices in
   with_decl ctx (mk_decl "x"%bs I) $ fun ctx x =>  
   (* Add a let-binding for the recursive [Repr] instance. *)
-  (*with_rec_inst ctx ind ind_body (tVar fix_param) $ fun ctx rec_inst =>*)
+  with_rec_inst ctx ind ind_body (tVar fix_param) $ fun ctx rec_inst =>
   (* Build the match. *)
   let body := build_match ctx ind ind_body (List.map tVar params) (tVar x) ctor_names in
   (* Abstract over all the variables. *)
   mk_fix ctx fix_param (List.length params + List.length indices + List.length param_insts) $ 
     mk_lambdas ctx (params ++ indices ++ param_insts ++ [x]) $ 
-      (*mk_lets ctx [rec_inst] $*) 
+      mk_lets ctx [rec_inst] $
         (* This is a hack : for some reason without this the let-in gets reduced when adding the 
          definition to the global environment.
          In the future we will return only [body]. *)
-         body.
-        (*mkApps quoted_letin [NamedCtx.get_type ctx rec_inst ; tVar rec_inst ; body].*)
+        mkApps quoted_letin [NamedCtx.get_type ctx rec_inst ; tVar rec_inst ; body].
 
 (** Derive command entry-point. *)
 Definition derive (ind : inductive) : TemplateMonad unit :=
@@ -214,7 +215,7 @@ Definition derive (ind : inductive) : TemplateMonad unit :=
       ind_body.(ind_ctors)
   ;;
   (* Derive the [Repr] instance. *)
-  let instance := build_func NamedCtx.empty ind ind_body ctor_names in
+  mlet instance <- (tmEval cbv $ build_func NamedCtx.empty ind ind_body ctor_names) ;;
   tmPrint "FUNC_TY" ;;
   tmPrint =<< tmEval cbv (build_func_ty NamedCtx.empty ind ind_body) ;;
   tmPrint "FUNC" ;;
@@ -270,17 +271,24 @@ Definition vec_ind_ := {|
   inductive_mind := (MPfile ["Deriving"%bs], "vec"%bs);
   inductive_ind := 0
 |}.
+Definition tree_ind_ := {|
+  inductive_mind := (MPfile ["Deriving"%bs], "tree"%bs);
+  inductive_ind := 0
+|}.
 
-MetaCoq Run (derive vec_ind_).
+Print tree.
+
+MetaCoq Run (derive tree_ind_).
 Print repr_derive.
 
-Definition x := (fix fix_param (H : nat) (x : empty_vec H) {struct x} : doc unit :=
-  let _ := (fun H0 : nat => {| repr_doc := fix_param H0 |})
-  in
+Definition x :=
+  fix fix_param (A : Type) (H : nat) (H0 : A) (H1 : Repr A) (x : tree A H H0) {struct x} : doc unit :=
+    let _ := fun (A0 : Type) (H2 : nat) (H3 : A0) (H4 : Repr A0) => {| repr_doc := fix_param A0 H2 H3 H4 |} in
     match x with
-    | EVNil => repr_ctor "EVNil" []
-    | EVCons n x0 => repr_ctor "EVCons" [repr_doc n; repr_doc x0]
-    end).
+    | Leaf a => repr_ctor "Leaf" [repr_doc a]
+    | Node a n m x0 x1 x2 =>
+      repr_ctor "Node" [repr_doc a; repr_doc n; repr_doc m; repr_doc x0; repr_doc x1; repr_doc x2]
+    end.
 
 (*Record color := { red : list nat * list nat ; green : list nat ; blue : list nat }. 
 
