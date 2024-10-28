@@ -11,6 +11,8 @@ From ReductionEffect Require Import PrintingEffect.
 Import ListNotations MCMonadNotation.
 Open Scope list_scope.
 
+Set Universe Polymorphism.
+
 (** TODO : this is for debugging. *)
 Axiom evar_axiom : forall A, A.
 MetaCoq Quote Definition quoted_evar_axiom := evar_axiom.
@@ -112,8 +114,8 @@ Definition with_ind_vars {T} ctx (ind_body : one_inductive_body)
 (** Build a single argument. *)
 Definition build_arg ctx (arg : ident) : term :=
   (* I use an evar in place of the [Repr] instance, which will be solved when unquoting the term. *)
-  (*let evar := fresh_evar ctx in*)
-  let evar := mkApp quoted_evar_axiom $ mkApp quoted_Repr $ NamedCtx.get_type ctx arg in
+  let evar := fresh_evar ctx in
+  (*let evar := mkApp quoted_evar_axiom $ mkApp quoted_Repr $ NamedCtx.get_type ctx arg in*)
   ret $ mkApps quoted_repr_doc [NamedCtx.get_type ctx arg; evar; tVar arg].
 
 (** Build a branch for a single constructor. *)
@@ -195,18 +197,10 @@ Definition build_func ctx (ind : inductive) (ind_body : one_inductive_body) (cto
          In the future we will return only [body]. *)
         mkApps quoted_letin [NamedCtx.get_type ctx rec_inst ; tVar rec_inst ; body].
 
-(** Derive command entry-point. *)
-Definition derive {A} (raw_ind : A) : TemplateMonad unit :=
-  (* Get the inductive. *)
-  mlet quoted_ind <- tmQuote raw_ind ;;
-  mlet ind <- 
-    match quoted_ind with 
-    | tInd ind _ => ret ind
-    | _ => tmFail "Not an inductive"%bs
-    end
-  ;; 
-  (* Get the global environment needed to type the inductive. *)
-  mlet env <- env_of_terms [quoted_ind; quoted_doc_unit; quoted_Repr] ;;
+Definition unquote_func (func_ty : Type) (func : term) : TemplateMonad func_ty := 
+  tmUnquoteTyped func_ty func.
+
+Definition build_instance (env : global_env) (ind : inductive) : TemplateMonad unit :=
   (* Get the inductive body. *)
   mlet (mind_body, ind_body) <- 
     match lookup_inductive env ind with 
@@ -220,30 +214,43 @@ Definition derive {A} (raw_ind : A) : TemplateMonad unit :=
       (fun c => tmQuote =<< tmEval cbv (bytestring.String.to_string c.(cstr_name))) 
       ind_body.(ind_ctors)
   ;;
-  (* Construct a fresh universe instance for [ind]. *)
-  let uinst := 
-    match mind_body.(ind_universes) with 
-    | Monomorphic_ctx => []
-    | Polymorphic_ctx (names, _) => List.init (List.length names) Level.lvar
-    end
-  in
-  (* Derive the [Repr] instance. *)
-  let func_ty := build_func_ty NamedCtx.empty ind ind_body uinst in
+  (* Build the function type. *)
+  mlet func_ty <- tmUnquoteTyped Type (build_func_ty NamedCtx.empty ind ind_body []) ;;
   tmPrint "FUNC_TY" ;;
-  tmPrint =<< tmEval cbv func_ty ;;
-  (*let func := build_func NamedCtx.empty ind ind_body ctor_names uinst in
+  tmPrint func_ty ;;
+  (* Build the function term. *)
+  let quoted_func := build_func NamedCtx.empty ind ind_body ctor_names [] in
+  mlet func <- unquote_func func_ty quoted_func ;;
   tmPrint "FUNC" ;;
-  tmPrint =<< tmEval cbv func ;;*)
+  tmPrint func ;;
+  (* Quote again and add the definition. *)
+  mlet quoted_func' <- tmQuote func ;;
+  tmPrint quoted_func'.
+
+(** Derive command entry-point. *)
+Definition derive {A} (raw_ind : A) : TemplateMonad unit :=
+  (* Get the inductive. *)
+  mlet quoted_ind <- tmQuote raw_ind ;;
+  mlet ind <- 
+    match quoted_ind with 
+    | tInd ind _ => ret ind
+    | _ => tmFail "Not an inductive"%bs
+    end
+  ;; 
+  (* Get the global environment needed to type the inductive. *)
+  mlet env <- env_of_terms [quoted_ind; quoted_doc_unit; quoted_Repr] ;;
+  (* Build the Repr instance. *)
+  build_instance env ind.
   (*tmPrint =<< tmEval cbv (print_term (env, Monomorphic_ctx) [] true func) ;;*)
   (* Add the instance to the global environment and register it as an instance. *)
-  tmMkDefinition "repr_derive"%bs func_ty.
+  (*tmMkDefinition "repr_derive"%bs func_ty*)
   
 (** TESTING *)
 
 Instance repr_bool : Repr bool :=
 { repr_doc b := if b then str "true" else str "false" }.
 
-Inductive bool_option := 
+Monomorphic Inductive bool_option := 
   | B1 : bool_option
   | B2 : bool -> bool_option.
 Inductive mylist (A : Type) :=
@@ -258,16 +265,17 @@ Polymorphic Inductive poption (A : Type) :=
   | PNone : poption A
   | PSome : A -> poption A. 
 
-Search "tmMk".
-About one_inductive_entry.
+(* TODO : the evars are still not solved. *)
+Unset MetaCoq Strict Unquote Universe Mode.
+MetaCoq Run (derive bool_option).
 
-Print mutual_inductive_body.
-Print universes_entry_of_decl.
-Print AUContext.repr.
-
-
-MetaCoq Run (derive poption).
-Print repr_derive.
+Definition x := (fix fix_param (x : bool_option) : doc unit :=
+  let rec_inst := {| repr_doc := fix_param |} in
+  letin (Repr bool_option) rec_inst
+  match x with
+    | @B1 => repr_ctor "B1" []
+    | @B2 x0 => repr_ctor "B2" [@repr_doc bool ?r@{b:=x0} x0]
+    end).
 
 Definition x :=
   fix fix_param (A : Type) (H : nat) (H0 : A) (H1 : Repr A) (x : tree A H H0) {struct x} : doc unit :=
