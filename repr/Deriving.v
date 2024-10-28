@@ -13,27 +13,27 @@ Open Scope list_scope.
 
 Set Universe Polymorphism.
 
-(*
-
 (** TODO : this is for debugging. *)
 Axiom evar_axiom : forall A, A.
 MetaCoq Quote Definition quoted_evar_axiom := evar_axiom.
 
+(** Pretty-print the constructor argument [arg]. *)
+Definition repr_arg {A} `{Repr A} (arg : A) : doc unit :=
+  repr_doc (S app_precedence) arg.
+
 (** Pretty-print the application of constructor [label] to a list of arguments [args]. *)
-Definition repr_ctor (label : string) (args : list (doc unit)) : doc unit :=
+Definition repr_ctor (min_prec : nat) (label : string) (args : list (doc unit)) : doc unit :=
   (*let res := separate (break 1) (str label :: args) in*)
-  let res := flow (break 1) (str label :: args) in
-  group (hang 4 res).
+  let res := 
+    match args with 
+    | [] => str label
+    | _ => paren_if min_prec app_precedence $ flow (break 1) (str label :: args) 
+    end
+  in
+  group $ hang 2 res.
 
 (** SCRATCH *)
 
-Instance repr_list {A} `{Repr A} : Repr (list A) :=
-{
-  repr_doc l := 
-    let contents := flow_map (str ";" ^^ break 1) repr_doc l in
-    let res := str "[" ^^ align contents ^^ str "]" in
-    group (align res)
-}.
 
 Instance repr_nat : Repr nat.
 Admitted.
@@ -42,14 +42,14 @@ Inductive vec A : nat -> Type :=
   | VNil : vec A 0
   | VCons : forall n, A -> vec A n -> vec A (S n).
 
-Fixpoint repr_vec (A : Type) n (_ : Repr A)  (xs : vec A n) {struct xs} : doc unit :=
+Fixpoint repr_vec (A : Type) n (_ : Repr A) (min_prec : nat) (xs : vec A n) {struct xs} : doc unit :=
   let inst A' n' RA' := Build_Repr _ (repr_vec A' n' RA') in
   match xs with 
-  | VNil => repr_ctor "VNil" []
-  | VCons n x xs => repr_ctor "VCons" [repr_doc n; repr_doc x; repr_doc xs]
+  | VNil => repr_ctor min_prec "VNil" []
+  | VCons n x xs => repr_ctor min_prec "VCons" [repr_arg n; repr_arg x; repr_arg xs]
   end.
 
-Inductive tree A : nat -> A -> Type :=
+(*Inductive tree A : nat -> A -> Type :=
   | Leaf : forall a : A, tree A 0 a 
   | Node : forall a n m, A -> tree (list A) n [a] -> tree A m a -> tree A (n + m) a.
 Arguments Leaf {A}.
@@ -84,6 +84,8 @@ MetaCoq Quote Definition quoted_nil := (@nil).
 MetaCoq Quote Definition quoted_cons := (@cons).
 MetaCoq Quote Definition quoted_Repr := (Repr).
 MetaCoq Quote Definition quoted_Build_Repr := (Build_Repr).
+MetaCoq Quote Definition quoted_paren_if := (paren_if).
+MetaCoq Quote Definition quoted_app_precedence := (app_precedence).
 
 (** [term_list ty xs] builds the term corresponding to the list [x1; ...; xn], 
     assuming each [xi] has type [ty]. *)
