@@ -280,7 +280,7 @@ Polymorphic Inductive poption (A : Type) :=
   | PSome : A -> poption A. 
 
 (* TODO : the evars are still not solved. *)
-Unset MetaCoq Strict Unquote Universe Mode.
+(*Unset MetaCoq Strict Unquote Universe Mode.
 MetaCoq Run (derive tree).
 
 Definition x := (fix fix_param
