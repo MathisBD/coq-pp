@@ -38,18 +38,25 @@ Definition repr_ctor (min_prec : nat) (label : string) (args : list (doc unit)) 
 Instance repr_nat : Repr nat.
 Admitted.
 
-Inductive vec A : nat -> Type :=
+Instance repr_list {A} `{Repr A} : Repr (list A) :=
+{
+  repr_doc _ l := 
+    let contents := flow_map (str ";" ^^ break 1) (repr_doc 0) l in
+    group $ bracket "[" contents "]"
+}.
+
+Monomorphic Inductive vec A : nat -> Type :=
   | VNil : vec A 0
   | VCons : forall n, A -> vec A n -> vec A (S n).
 
-Fixpoint repr_vec (A : Type) n (_ : Repr A) (min_prec : nat) (xs : vec A n) {struct xs} : doc unit :=
+Fixpoint repr_vec (A : Type) n (_ : Repr A) (prec : nat) (xs : vec A n) {struct xs} : doc unit :=
   let inst A' n' RA' := Build_Repr _ (repr_vec A' n' RA') in
   match xs with 
-  | VNil => repr_ctor min_prec "VNil" []
-  | VCons n x xs => repr_ctor min_prec "VCons" [repr_arg n; repr_arg x; repr_arg xs]
+  | VNil => repr_ctor prec "VNil" []
+  | VCons n x xs => repr_ctor prec "VCons" [repr_arg n; repr_arg x; repr_arg xs]
   end.
 
-(*Inductive tree A : nat -> A -> Type :=
+Monomorphic Inductive tree A : nat -> A -> Type :=
   | Leaf : forall a : A, tree A 0 a 
   | Node : forall a n m, A -> tree (list A) n [a] -> tree A m a -> tree A (n + m) a.
 Arguments Leaf {A}.
@@ -60,11 +67,11 @@ Definition repr_tree :=
     (A : Type) 
     (n : nat) (a : A) 
     (RA : Repr A) 
-    (xs : tree A n a) {struct xs} : doc unit :=
+    (prec : nat) (xs : tree A n a) {struct xs} : doc unit :=
     let _ := fun (A' : Type) (n' : nat) (a' : A') (RA' : Repr A') => Build_Repr _ (f A' n' a' RA') in 
     match xs with 
-    | Leaf a => repr_ctor "Leaf" [repr_doc a]
-    | Node a n m x l r => repr_ctor "Node" [repr_doc a ; repr_doc n; repr_doc m ; repr_doc x; repr_doc l; repr_doc r]
+    | Leaf a => repr_ctor prec "Leaf" [repr_arg a]
+    | Node a n m x l r => repr_ctor prec "Node" [repr_arg a ; repr_arg n; repr_arg m ; repr_arg x; repr_arg l; repr_arg r]
     end.
 
 (*Definition repr_tree' {A} {RA : Repr A} : Repr (tree A) := Build_Repr _ (repr_tree A RA).
@@ -77,15 +84,14 @@ Eval compute in repr $ Node true (Node [true; false; true] Leaf Leaf) (Node fals
 (** END SCRATCH *)
 
 (** Quote some terms that we will need below. *)
-MetaCoq Quote Definition quoted_repr_doc := (@repr_doc).
-MetaCoq Quote Definition quoted_repr_ctor := (repr_ctor).
+MetaCoq Quote Definition quoted_repr_arg := (@repr_arg).
+MetaCoq Quote Definition quoted_repr_ctor := (@repr_ctor).
 MetaCoq Quote Definition quoted_doc_unit := (doc unit).
 MetaCoq Quote Definition quoted_nil := (@nil).
 MetaCoq Quote Definition quoted_cons := (@cons).
+MetaCoq Quote Definition quoted_nat := (nat).
 MetaCoq Quote Definition quoted_Repr := (Repr).
 MetaCoq Quote Definition quoted_Build_Repr := (Build_Repr).
-MetaCoq Quote Definition quoted_paren_if := (paren_if).
-MetaCoq Quote Definition quoted_app_precedence := (app_precedence).
 
 (** [term_list ty xs] builds the term corresponding to the list [x1; ...; xn], 
     assuming each [xi] has type [ty]. *)
@@ -120,16 +126,16 @@ Definition build_arg ctx (arg : ident) : term :=
   (* I use an evar in place of the [Repr] instance, which will be solved when unquoting the term. *)
   let evar := fresh_evar ctx in
   (*let evar := mkApp quoted_evar_axiom $ mkApp quoted_Repr $ NamedCtx.get_type ctx arg in*)
-  ret $ mkApps quoted_repr_doc [NamedCtx.get_type ctx arg; evar; tVar arg].
+  ret $ mkApps quoted_repr_arg [NamedCtx.get_type ctx arg; evar; tVar arg].
 
 (** Build a branch for a single constructor. *)
-Definition build_branch ctx (ind : term) (params : list term) (ctor_body : constructor_body) (quoted_ctor_name : term) : branch term :=
+Definition build_branch ctx (ind : term) (params : list term) (prec : term)
+  (ctor_body : constructor_body) (quoted_ctor_name : term) : branch term :=
   (* Get the list of arguments of the constructor. *)
   with_ctor_args ctx ctor_body ind params $ fun ctx args =>
-  (*with_ctor_indices ind ctor_body params $ fun ctor_indices =>*) 
-  (* Apply [repr_ctor] to the label and the arguments. *)
+  (* Apply [repr_ctor] to the precedence, label and the arguments. *)
   let repr_args := term_list quoted_doc_unit $ List.map (build_arg ctx) args in
-  mk_branch ctx args $ mkApps quoted_repr_ctor [quoted_ctor_name; repr_args].
+  mk_branch ctx args $ mkApps quoted_repr_ctor [prec; quoted_ctor_name; repr_args].
 
 (* fun (A' : Type) (H' : Repr A') => Build_Repr (mylist A') (fix_param A' H') *)
 
@@ -151,7 +157,7 @@ Definition with_rec_inst {T} ctx (ind_body : one_inductive_body) (ind : term) (f
 
 (** Build the case expression. *)
 Definition build_match ctx (ind : inductive) (ind_body : one_inductive_body) (uinst : Instance.t)
-  (params : list term) (x : term) (ctor_names : list term) : term :=
+  (params : list term) (x : term) (ctor_names : list term) (prec : term) : term :=
   (* Case info. *)  
   let ci := {| ci_ind := ind ; ci_npar := List.length params ; ci_relevance := Relevant |} in
   (* Case predicate. *)
@@ -161,18 +167,19 @@ Definition build_match ctx (ind : inductive) (ind_body : one_inductive_body) (ui
       mk_pred ctx params indices x quoted_doc_unit
   in
   (* Case branches. *)
-  let branches := map2 (build_branch ctx (tInd ind uinst) params) ind_body.(ind_ctors) ctor_names in
+  let branches := map2 (build_branch ctx (tInd ind uinst) params prec) ind_body.(ind_ctors) ctor_names in
   (* Result. *)
   tCase ci pred x branches.
 
 (** Build the raw function's type. *)
 Definition build_func_ty ctx (ind : inductive) (ind_body : one_inductive_body) (uinst : Instance.t) : term :=
   with_ind_vars ctx ind_body $ fun ctx params indices param_insts =>
-  (* Declare the inductive element. *)
+  (* Declare the precedence and inductive element. *)
+  with_decl ctx (mk_decl "min_prec"%bs quoted_nat) $ fun ctx prec =>
   let I := mkApps (tInd ind uinst) $ List.map tVar $ params ++ indices in
   with_decl ctx (mk_decl "x"%bs I) $ fun ctx x =>
   (* Make the final product. *)
-  mk_prods ctx (params ++ indices ++ param_insts ++ [x]) quoted_doc_unit.
+  mk_prods ctx (params ++ indices ++ param_insts ++ [prec; x]) quoted_doc_unit.
 
 (* TODO : this is for debugging. *)
 Definition letin (A : Type) (x : A) (y : doc unit) := y.
@@ -185,21 +192,24 @@ Definition build_func ctx (ind : inductive) (ind_body : one_inductive_body) (cto
   with_decl ctx (mk_decl "fix_param"%bs $ build_func_ty ctx ind ind_body uinst) $ fun ctx fix_param =>
   (* Declare the inductive parameters, indices and [Repr] instances. *)
   with_ind_vars ctx ind_body $ fun ctx params indices param_insts =>
+  (* Declare the minimum precedence [min_prec]. *)
+  with_decl ctx (mk_decl "min_prec"%bs quoted_nat) $ fun ctx prec =>
   (* Declare the input parameter [x]. *)
   let I := mkApps (tInd ind uinst) $ List.map tVar $ params ++ indices in
   with_decl ctx (mk_decl "x"%bs I) $ fun ctx x =>  
   (* Add a let-binding for the recursive [Repr] instance. *)
   with_rec_inst ctx ind_body (tInd ind uinst) (tVar fix_param) $ fun ctx rec_inst =>
   (* Build the match. *)
-  let body := build_match ctx ind ind_body uinst (List.map tVar params) (tVar x) ctor_names in
+  let body := build_match ctx ind ind_body uinst (List.map tVar params) (tVar x) ctor_names (tVar prec) in
   (* Abstract over all the variables. *)
-  mk_fix ctx fix_param (List.length params + List.length indices + List.length param_insts) $ 
-    mk_lambdas ctx (params ++ indices ++ param_insts ++ [x]) $ 
+  mk_fix ctx fix_param (List.length params + List.length indices + List.length param_insts + 1) $ 
+    mk_lambdas ctx (params ++ indices ++ param_insts ++ [prec; x]) $ 
       mk_lets ctx [rec_inst] $
         (* This is a hack : for some reason without this the let-in gets reduced when adding the 
          definition to the global environment.
          In the future we will return only [body]. *)
-        mkApps quoted_letin [NamedCtx.get_type ctx rec_inst ; tVar rec_inst ; body].
+         body.
+        (*mkApps quoted_letin [NamedCtx.get_type ctx rec_inst ; tVar rec_inst ; body].*)
 
 Definition unquote_func (func_ty : Type) (func : term) : TemplateMonad func_ty := 
   tmUnquoteTyped func_ty func.
@@ -226,10 +236,10 @@ Definition build_instance (env : global_env) (ind : inductive) : TemplateMonad u
   let quoted_func := build_func NamedCtx.empty ind ind_body ctor_names [] in
   mlet func <- unquote_func func_ty quoted_func ;;
   tmPrint "FUNC" ;;
-  tmPrint func ;;
+  tmPrint func.
   (* Quote again and add the definition. *)
-  mlet quoted_func' <- tmQuote func ;;
-  tmPrint quoted_func'.
+  (*mlet quoted_func' <- tmQuote func ;;
+  tmPrint quoted_func'.*)
 
 (** Derive command entry-point. *)
 Definition derive {A} (raw_ind : A) : TemplateMonad unit :=
@@ -252,17 +262,17 @@ Definition derive {A} (raw_ind : A) : TemplateMonad unit :=
 (** TESTING *)
 
 Instance repr_bool : Repr bool :=
-{ repr_doc b := if b then str "true" else str "false" }.
+{ repr_doc _ b := if b then str "true" else str "false" }.
 
 Monomorphic Inductive bool_option := 
   | B1 : bool_option
   | B2 : bool -> bool_option.
-Inductive mylist (A : Type) :=
+Monomorphic Inductive mylist (A : Type) :=
   | MyNil : mylist A
   | MyCons : A -> mylist A -> mylist A.
-Inductive myind (A B : Type) : Type := 
+Monomorphic Inductive myind (A B : Type) : Type := 
   | MyConstr : bool -> A -> myind A bool -> myind A B.
-Inductive empty_vec : nat -> Type :=
+Monomorphic Inductive empty_vec : nat -> Type :=
   | EVNil : empty_vec 0
   | EVCons : forall n, empty_vec n -> empty_vec (S n).
 Polymorphic Inductive poption (A : Type) :=
@@ -271,24 +281,19 @@ Polymorphic Inductive poption (A : Type) :=
 
 (* TODO : the evars are still not solved. *)
 Unset MetaCoq Strict Unquote Universe Mode.
-MetaCoq Run (derive bool_option).
+MetaCoq Run (derive tree).
 
-Definition x := (fix fix_param (x : bool_option) : doc unit :=
-  let rec_inst := {| repr_doc := fix_param |} in
-  letin (Repr bool_option) rec_inst
-  match x with
-    | @B1 => repr_ctor "B1" []
-    | @B2 x0 => repr_ctor "B2" [@repr_doc bool ?r@{b:=x0} x0]
-    end).
-
-Definition x :=
-  fix fix_param (A : Type) (H : nat) (H0 : A) (H1 : Repr A) (x : tree A H H0) {struct x} : doc unit :=
-    let _ := fun (A0 : Type) (H2 : nat) (H3 : A0) (H4 : Repr A0) => {| repr_doc := fix_param A0 H2 H3 H4 |} in
-    match x with
-    | Leaf a => repr_ctor "Leaf" [repr_doc a]
-    | Node a n m x0 x1 x2 =>
-      repr_ctor "Node" [repr_doc a; repr_doc n; repr_doc m; repr_doc x0; repr_doc x1; repr_doc x2]
-    end.
+Definition x := (fix fix_param
+(A : Type) (H : nat) (H0 : Repr A) (min_prec : nat) 
+(x : vec A H) {struct x} : doc unit :=
+let rec_inst :=
+fun (A0 : Type) (H1 : nat) (H2 : Repr A0) =>
+  {| repr_doc := fix_param A0 H1 H2 |} in
+match x with
+| @VNil _ => repr_ctor min_prec "VNil" []
+| @VCons _ n x0 x1 =>
+    repr_ctor min_prec "VCons" [repr_arg n; repr_arg x0; repr_arg x1]
+end).
 
 (*Record color := { red : list nat * list nat ; green : list nat ; blue : list nat }. 
 
