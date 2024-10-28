@@ -197,17 +197,15 @@ Definition with_ind_indices {T} (ctx : NamedCtx.t) (ind_body : one_inductive_bod
   let indices := map_context_with_binders S (subst $ List.rev params) 0 ind_body.(ind_indices) in
   with_context ctx indices k.
 
-(** [with_ctor_args ctx ind ctor_body params k] declares the arguments of the constructor [ctor_body] in the local context,
+(** [with_ctor_args ctx ctor_body ind params k] declares the arguments of the constructor [ctor_body] in the local context,
     and executes [k] with the extended context and arguments. 
     - [k] takes the arguments ordered from first to last.
-    - [ind] is the inductive this constructor belongs to.
+    - [ind] is the inductive this constructor belongs to (not applied to any parameters).
     - [params] contains the parameters of the inductive, ordered from first to last. *)
-Definition with_ctor_args {T} (ctx : NamedCtx.t) (ind : inductive) (ctor_body : constructor_body) 
-  (params : list term) (k : NamedCtx.t -> list ident -> T) : T :=
+Definition with_ctor_args {T} (ctx : NamedCtx.t) (ctor_body : constructor_body) 
+  (ind : term) (params : list term) (k : NamedCtx.t -> list ident -> T) : T :=
   (* Recall that the constructor arguments can depend on the inductive and on its parameters. *)
-  let () := print ("arg_context_1", ctor_body.(cstr_args)) in
-  let args := map_context_with_binders S (subst $ List.rev (tInd ind [] :: params)) 0 ctor_body.(cstr_args) in
-  let () := print ("arg_context_2", args) in
+  let args := map_context_with_binders S (subst $ List.rev (ind :: params)) 0 ctor_body.(cstr_args) in
   with_context ctx args k.
 
 (** [with_ctor_indices ind ctor_body params k] gets the *value* of the indices of the constructor [ctor_body]

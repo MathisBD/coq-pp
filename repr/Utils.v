@@ -49,6 +49,16 @@ Arguments monad_mapi {T}%_function_scope {M} {A B}%_type_scope f%_function_scope
 Module List.
 Include List.
 
+(** [init n f] builds the list [f 0; f 1; ... ; f (n-1)]. *)
+Definition init {T} (n : nat) (f : nat -> T) := 
+  let fix loop acc n :=
+    match n with
+    | 0 => acc
+    | S n => loop (f n :: acc) n
+    end
+  in 
+  loop [] n.
+
 (** [find_map pred l] applies [pred] to each element in [l] in order, 
     and returns the first result of the form [Some _]. *)
 Fixpoint find_map {A B} (pred : A -> option B) (l : list A) : option B :=

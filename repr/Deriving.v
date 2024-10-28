@@ -96,7 +96,7 @@ Fixpoint term_list (ty : term) (xs : list term) : term :=
     - declarations for instances of [Repr] for each parameter (not for indices).
 
     This is a common pattern that is reused several times below. *)
-Definition with_ind_vars {T} ctx (ind : inductive) (ind_body : one_inductive_body) 
+Definition with_ind_vars {T} ctx (ind_body : one_inductive_body) 
   (k : NamedCtx.t -> list ident -> list ident -> list ident -> T) : T :=
   (* Declare the inductive parameters. *)
   with_ind_params ctx ind_body $ fun ctx params =>
@@ -117,10 +117,9 @@ Definition build_arg ctx (arg : ident) : term :=
   ret $ mkApps quoted_repr_doc [NamedCtx.get_type ctx arg; evar; tVar arg].
 
 (** Build a branch for a single constructor. *)
-Definition build_branch ctx (ind : inductive) (params : list term) (ctor_body : constructor_body) (quoted_ctor_name : term) : branch term :=
+Definition build_branch ctx (ind : term) (params : list term) (ctor_body : constructor_body) (quoted_ctor_name : term) : branch term :=
   (* Get the list of arguments of the constructor. *)
-  with_ctor_args ctx ind ctor_body params $ fun ctx args =>
-  let () := print ("CTOR_ARGS", args, List.map (NamedCtx.get_type ctx) args) in
+  with_ctor_args ctx ctor_body ind params $ fun ctx args =>
   (*with_ctor_indices ind ctor_body params $ fun ctor_indices =>*) 
   (* Apply [repr_ctor] to the label and the arguments. *)
   let repr_args := term_list quoted_doc_unit $ List.map (build_arg ctx) args in
@@ -129,10 +128,10 @@ Definition build_branch ctx (ind : inductive) (params : list term) (ctor_body : 
 (* fun (A' : Type) (H' : Repr A') => Build_Repr (mylist A') (fix_param A' H') *)
 
 (** Bind the recursive [Repr] instance. *)
-Definition with_rec_inst {T} ctx (ind : inductive) (ind_body : one_inductive_body) (fix_param : term) (k : NamedCtx.t -> ident -> T) : T :=
+Definition with_rec_inst {T} ctx (ind_body : one_inductive_body) (ind : term) (fix_param : term) (k : NamedCtx.t -> ident -> T) : T :=
   let (ty, body) := 
-    with_ind_vars ctx ind ind_body $ fun ctx params indices param_insts =>
-    let I := mkApps (tInd ind []) $ List.map tVar $ params ++ indices in
+    with_ind_vars ctx ind_body $ fun ctx params indices param_insts =>
+    let I := mkApps ind $ List.map tVar $ params ++ indices in
     let body := mkApps fix_param $ List.map tVar $ params ++ indices ++ param_insts in
     ( mk_prods ctx (params ++ indices ++ param_insts) $ mkApp quoted_Repr I
     , mk_lambdas ctx (params ++ indices ++ param_insts) $ mkApps quoted_Build_Repr [I ; body])
@@ -145,26 +144,26 @@ Definition with_rec_inst {T} ctx (ind : inductive) (ind_body : one_inductive_bod
   with_decl ctx decl k.
 
 (** Build the case expression. *)
-Definition build_match ctx (ind : inductive) (ind_body : one_inductive_body) 
+Definition build_match ctx (ind : inductive) (ind_body : one_inductive_body) (uinst : Instance.t)
   (params : list term) (x : term) (ctor_names : list term) : term :=
   (* Case info. *)  
   let ci := {| ci_ind := ind ; ci_npar := List.length params ; ci_relevance := Relevant |} in
   (* Case predicate. *)
   let pred := 
     with_ind_indices ctx ind_body params $ fun ctx indices =>
-    with_decl ctx (mk_decl "x"%bs $ mkApps (tInd ind []) params) $ fun ctx x => 
+    with_decl ctx (mk_decl "x"%bs $ mkApps (tInd ind uinst) params) $ fun ctx x => 
       mk_pred ctx params indices x quoted_doc_unit
   in
   (* Case branches. *)
-  let branches := map2 (build_branch ctx ind params) ind_body.(ind_ctors) ctor_names in
+  let branches := map2 (build_branch ctx (tInd ind uinst) params) ind_body.(ind_ctors) ctor_names in
   (* Result. *)
   tCase ci pred x branches.
 
 (** Build the raw function's type. *)
-Definition build_func_ty ctx (ind : inductive) (ind_body : one_inductive_body) : term :=
-  with_ind_vars ctx ind ind_body $ fun ctx params indices param_insts =>
+Definition build_func_ty ctx (ind : inductive) (ind_body : one_inductive_body) (uinst : Instance.t) : term :=
+  with_ind_vars ctx ind_body $ fun ctx params indices param_insts =>
   (* Declare the inductive element. *)
-  let I := mkApps (tInd ind []) $ List.map tVar $ params ++ indices in
+  let I := mkApps (tInd ind uinst) $ List.map tVar $ params ++ indices in
   with_decl ctx (mk_decl "x"%bs I) $ fun ctx x =>
   (* Make the final product. *)
   mk_prods ctx (params ++ indices ++ param_insts ++ [x]) quoted_doc_unit.
@@ -174,18 +173,19 @@ Definition letin (A : Type) (x : A) (y : doc unit) := y.
 MetaCoq Quote Definition quoted_letin := letin. 
 
 (** Build the raw function. *)
-Definition build_func ctx (ind : inductive) (ind_body : one_inductive_body) (ctor_names : list term) : term :=
+Definition build_func ctx (ind : inductive) (ind_body : one_inductive_body) (ctor_names : list term) 
+  (uinst : Instance.t) : term :=
   (* Declare the fixpoint parameter. *)
-  with_decl ctx (mk_decl "fix_param"%bs $ build_func_ty ctx ind ind_body) $ fun ctx fix_param =>
+  with_decl ctx (mk_decl "fix_param"%bs $ build_func_ty ctx ind ind_body uinst) $ fun ctx fix_param =>
   (* Declare the inductive parameters, indices and [Repr] instances. *)
-  with_ind_vars ctx ind ind_body $ fun ctx params indices param_insts =>
+  with_ind_vars ctx ind_body $ fun ctx params indices param_insts =>
   (* Declare the input parameter [x]. *)
-  let I := mkApps (tInd ind []) $ List.map tVar $ params ++ indices in
+  let I := mkApps (tInd ind uinst) $ List.map tVar $ params ++ indices in
   with_decl ctx (mk_decl "x"%bs I) $ fun ctx x =>  
   (* Add a let-binding for the recursive [Repr] instance. *)
-  with_rec_inst ctx ind ind_body (tVar fix_param) $ fun ctx rec_inst =>
+  with_rec_inst ctx ind_body (tInd ind uinst) (tVar fix_param) $ fun ctx rec_inst =>
   (* Build the match. *)
-  let body := build_match ctx ind ind_body (List.map tVar params) (tVar x) ctor_names in
+  let body := build_match ctx ind ind_body uinst (List.map tVar params) (tVar x) ctor_names in
   (* Abstract over all the variables. *)
   mk_fix ctx fix_param (List.length params + List.length indices + List.length param_insts) $ 
     mk_lambdas ctx (params ++ indices ++ param_insts ++ [x]) $ 
@@ -196,16 +196,22 @@ Definition build_func ctx (ind : inductive) (ind_body : one_inductive_body) (cto
         mkApps quoted_letin [NamedCtx.get_type ctx rec_inst ; tVar rec_inst ; body].
 
 (** Derive command entry-point. *)
-Definition derive (ind : inductive) : TemplateMonad unit :=
+Definition derive {A} (raw_ind : A) : TemplateMonad unit :=
+  (* Get the inductive. *)
+  mlet quoted_ind <- tmQuote raw_ind ;;
+  mlet ind <- 
+    match quoted_ind with 
+    | tInd ind _ => ret ind
+    | _ => tmFail "Not an inductive"%bs
+    end
+  ;; 
   (* Get the global environment needed to type the inductive. *)
-  mlet t_doc <- tmQuote doc ;;
-  mlet t_unit <- tmQuote unit ;;
-  mlet env <- env_of_terms [tInd ind []; t_unit ; t_doc; quoted_Repr] ;;
+  mlet env <- env_of_terms [quoted_ind; quoted_doc_unit; quoted_Repr] ;;
   (* Get the inductive body. *)
-  mlet ind_body <- 
+  mlet (mind_body, ind_body) <- 
     match lookup_inductive env ind with 
     | None => tmFail "Failed looking up the inductive body"%bs
-    | Some (_, ind_body) => ret ind_body 
+    | Some bodies => ret bodies 
     end 
   ;;
   (* Quote the constructor names. *)
@@ -214,15 +220,23 @@ Definition derive (ind : inductive) : TemplateMonad unit :=
       (fun c => tmQuote =<< tmEval cbv (bytestring.String.to_string c.(cstr_name))) 
       ind_body.(ind_ctors)
   ;;
+  (* Construct a fresh universe instance for [ind]. *)
+  let uinst := 
+    match mind_body.(ind_universes) with 
+    | Monomorphic_ctx => []
+    | Polymorphic_ctx (names, _) => List.init (List.length names) Level.lvar
+    end
+  in
   (* Derive the [Repr] instance. *)
-  mlet instance <- (tmEval cbv $ build_func NamedCtx.empty ind ind_body ctor_names) ;;
+  let func_ty := build_func_ty NamedCtx.empty ind ind_body uinst in
   tmPrint "FUNC_TY" ;;
-  tmPrint =<< tmEval cbv (build_func_ty NamedCtx.empty ind ind_body) ;;
+  tmPrint =<< tmEval cbv func_ty ;;
+  (*let func := build_func NamedCtx.empty ind ind_body ctor_names uinst in
   tmPrint "FUNC" ;;
-  tmPrint =<< tmEval cbv instance ;;
-  tmPrint =<< tmEval cbv (print_term (env, Monomorphic_ctx) [] true instance) ;;
+  tmPrint =<< tmEval cbv func ;;*)
+  (*tmPrint =<< tmEval cbv (print_term (env, Monomorphic_ctx) [] true func) ;;*)
   (* Add the instance to the global environment and register it as an instance. *)
-  tmMkDefinition "repr_derive"%bs instance.
+  tmMkDefinition "repr_derive"%bs func_ty.
   
 (** TESTING *)
 
@@ -240,45 +254,19 @@ Inductive myind (A B : Type) : Type :=
 Inductive empty_vec : nat -> Type :=
   | EVNil : empty_vec 0
   | EVCons : forall n, empty_vec n -> empty_vec (S n).
+Polymorphic Inductive poption (A : Type) :=
+  | PNone : poption A
+  | PSome : A -> poption A. 
 
-Definition bool_ind_ := {|
-  inductive_mind :=
-    (MPfile ["Datatypes"%bs; "Init"%bs; "Coq"%bs], "bool"%bs);
-  inductive_ind := 0
-|}.
-Definition boption_ind_ := {|
-  inductive_mind := (MPfile ["Deriving"%bs], "bool_option"%bs);
-  inductive_ind := 0
-|}.
-Definition option_ind_ := {|
-  inductive_mind := (MPfile ["Datatypes"%bs; "Init"%bs; "Coq"%bs], "option"%bs);
-  inductive_ind := 0
-|}.
-Definition mylist_ind_ := {|
-inductive_mind :=
-    (MPfile ["Deriving"%bs], "mylist"%bs);
-  inductive_ind := 0
-|}.
-Definition myind_ind_ := {|
-  inductive_mind := (MPfile ["Deriving"%bs], "myind"%bs);
-  inductive_ind := 0
-|}.
-Definition empty_vec_ind_ := {|
-  inductive_mind := (MPfile ["Deriving"%bs], "empty_vec"%bs);
-  inductive_ind := 0
-|}.
-Definition vec_ind_ := {|
-  inductive_mind := (MPfile ["Deriving"%bs], "vec"%bs);
-  inductive_ind := 0
-|}.
-Definition tree_ind_ := {|
-  inductive_mind := (MPfile ["Deriving"%bs], "tree"%bs);
-  inductive_ind := 0
-|}.
+Search "tmMk".
+About one_inductive_entry.
 
-Print tree.
+Print mutual_inductive_body.
+Print universes_entry_of_decl.
+Print AUContext.repr.
 
-MetaCoq Run (derive tree_ind_).
+
+MetaCoq Run (derive poption).
 Print repr_derive.
 
 Definition x :=
