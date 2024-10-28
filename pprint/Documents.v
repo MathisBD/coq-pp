@@ -192,7 +192,11 @@ Definition softline : doc A := IfFlat Empty HardLine.
 (** The atomic document [blank n] consists of [n] blank characters. 
     A blank character is like an ordinary ASCII space character [char ' '], 
     except that blank characters that appear at the end of a line are automatically suppressed. *)
-Definition blank n : doc A := Blank n.
+Definition blank n : doc A := 
+  match n with 
+  | 0 => Empty
+  | _ => Blank n
+  end.
     
 (** [space] is a synonym for [blank 1]. It consists of one blank character.
     It is therefore not equivalent to [char ' ']. *)
@@ -344,7 +348,28 @@ Definition flow sep ds : doc A :=
 (** [flow_map sep f docs] is shorthand for [flow sep (List.map f xs)]. *)
 Definition flow_map {T} sep (f : T -> doc A) (xs : list T)  : doc A :=
   flow sep (List.map f xs).
-    
+  
+(** [bracket left doc right] surrounds [doc] with brackets [left] and [right]. 
+    In flat mode it simply concatenates everything :
+    [
+      leftdocright
+    ]
+    In normal mode it makes sure to increase the indentation level, yielding the 
+    following layout :
+    [
+      leftdoc1
+          doc2
+          doc3right
+    ]
+*)
+Definition bracket lbracket contents rbracket : doc A :=
+  str lbracket ^^ align contents ^^ str rbracket.
+  
+(** [paren doc] surrounds [doc] with parentheses. 
+    It sets the indentation level as explained in [bracket]. *)
+Definition paren contents : doc A :=
+  bracket "(" contents ")".
+
 End HighLevelCombinators.
 
 (** [x ^+^ y] separates [x] and [y] with a non-breakable space. *)
@@ -352,14 +377,3 @@ Notation "x ^+^ y" := (x ^^ space ^^ y) (at level 60, right associativity).
 
 (** [x ^/^ y] separates [x] and [y] with a breakable space. *)
 Notation "x ^/^ y" := (x ^^ break 1 ^^ y) (at level 60, right associativity).
-
-(** [x ^//^ y] has the following flat layout : 
-    [
-      x y
-    ] 
-    and the following non-flat layout : 
-    [
-      x 
-        y
-    ] *)
-Notation "x ^//^ y" := (prefix 1 2 x y) (at level 60, right associativity).

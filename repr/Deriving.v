@@ -13,6 +13,8 @@ Open Scope list_scope.
 
 Set Universe Polymorphism.
 
+(*
+
 (** TODO : this is for debugging. *)
 Axiom evar_axiom : forall A, A.
 MetaCoq Quote Definition quoted_evar_axiom := evar_axiom.

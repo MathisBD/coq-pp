@@ -19,19 +19,18 @@ Generalizable Variables A B C.
 
 (** Representation of natural numbers. *)
 Instance repr_nat : Repr nat :=
-{ repr_doc n := str (string_of_nat n) }.
+{ repr_doc n := str $ string_of_nat n }.
 
 (** Representation of strings. *)
 Instance repr_string : Repr string :=
-{ repr_doc s := str """" ^^ str s ^^ str """" }.
+{ repr_doc s := group $ bracket """" (str s) """" }.
 
 (** Representation of binary products. *)
 Instance repr_prod `{Repr A} `{Repr B} : Repr (A * B) :=
-{
+{ 
   repr_doc '(a, b) := 
-    let contents := repr_doc a ^^ str "," ^^ break 1 ^^ repr_doc b in
-    let res := str "(" ^^ align contents ^^ str ")" in
-    group (align res)
+    let contents := repr_doc a ^^ str "," ^/^ repr_doc b in
+    group $ paren contents
 }.
 
 (** Representation of lists. *)
@@ -39,6 +38,8 @@ Instance repr_list `{Repr A} : Repr (list A) :=
 {
   repr_doc l := 
     let contents := flow_map (str ";" ^^ break 1) repr_doc l in
-    let res := str "[" ^^ align contents ^^ str "]" in
-    group (align res)
+    group $ bracket "[" contents "]"
 }.
+
+(*Definition l n := List.init n id.
+Eval compute in repr (l 42, List.combine (l 10) (l 10), l 3, l 25).*)
