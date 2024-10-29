@@ -1,4 +1,4 @@
-From Coq Require Import List String Strings.Byte Ascii.
+From Coq Require Import Bool List PrimInt63 PrimString.
 Import ListNotations.
 
 (** * Width requirements. *)
@@ -122,35 +122,36 @@ Definition empty : doc A := Empty.
 
 (** [char c] is an atomic document that consists of the single character [c].
     This character must not be a newline character, although we do not check it. *)
-Definition char c : doc A := 
-  Str 1 (String c EmptyString).
+Definition char (c : char63) : doc A := 
+  Str 1 (PrimString.make 1%int63 c).
 
 (** [utf8_length s] counts the number of code points that occur in [s],
     assuming a UTF8 encoding. In general this might be smaller than the number
     of bytes in [s] : each code point is encoded using 1 to 4 bytes. *)
-Definition utf8_length (s : string) : nat :=
-  let fix loop len s {struct s} :=
-    match s with 
-    | EmptyString => len 
-    | String b0 s =>
-      if (b0 <? ascii_of_byte x80)%char then loop (S len) s else 
-      match s with 
-      | EmptyString => len 
-      | String b1 s =>
-        if (b0 <? ascii_of_byte xe0)%char then loop (S len) s else 
-        match s with 
-        | EmptyString => len 
-        | String b2 s => 
-          if (b0 <? ascii_of_byte xf0)%char then loop (S len) s else 
-          match s with 
-          | EmptyString => len 
-          | String b3 s => loop (S len) s
-          end
-        end
-      end
+Definition utf8_length (str : string) : nat :=
+  let len := PrimString.length str in
+  (* [i] is the index of the byte we are looking at.
+     [fuel] is used to make [loop] structurally recursive. *)
+  let fix loop (acc : nat) (i : int) (fuel : nat) :=
+    match fuel with 
+    | 0 => (* This should not happen. *) acc 
+    | S fuel =>
+      (* Check if we are done. *)
+      if leb len i then acc else 
+      (* Compute the number of bytes that the current code point spans. *)
+      let byte_count := 
+        let byte := get str i in
+        if      ltb byte 128 then 1%int63
+        else if ltb byte 224 then 2%int63
+        else if ltb byte 240 then 3%int63
+        else 4%int63
+      in 
+      (* Continue on the next code point. *)
+      loop (S acc) (add i byte_count) fuel
     end
   in
-  loop 0 s.
+  (* TODO : use the actual length of the string for the fuel. *)
+  loop 0 0%int63 (Nat.pow 2 10).
 
 (** [str s] is an atomic document that consists of the utf8-string [s]. 
     We assume (but do not check) that [s] does not contain a newline. *)

@@ -1,4 +1,4 @@
-From Coq Require Import String Ascii List.
+From Coq Require Import List PrimInt63 PrimString.
 From PPrint Require Import Monad Documents.
 Import ListNotations.
 Open Scope monad_scope.
@@ -31,19 +31,20 @@ Class MonadPPrint (Ann : Type) (M : Type -> Type) :=
 
 (** * Rendering a document. *)
 
-(** [make_string n c] makes a string of length [n] filled with the character [c]. *)
-Definition make_string (n : nat) (c : Ascii.ascii) : string :=
-  let fix loop n acc :=
-    match n with 
-    | 0 => acc
-    | S n => loop n (String c acc)
-    end
-  in 
-  loop n EmptyString.
-
 Section Rendering.
+
 (** The rendering engine is parameterized by a pretty printing monad. *)
 Context {Ann : Type} {M : Type -> Type} {MonadM : Monad M} {MonadPPrintM : MonadPPrint Ann M}.
+
+(** [int_of_nat n] converts the natural [n] to a primitive integer. *)
+Definition int_of_nat (n : nat) : int :=
+  let fix loop i n :=
+    match n with 
+    | 0 => i
+    | S n => loop (add 1%int63 i) n 
+    end 
+  in 
+  loop 0%int63 n.
 
 (** [prettyM doc flat width indent col] is the main function in the rendering engine :
     - [doc] is the document we are printing.
@@ -61,11 +62,11 @@ Fixpoint prettyM (doc : doc Ann) (flat : bool) (width indent col : nat) : M nat 
   match doc with
   | Empty => ret col
   | Str len s => add_string s ;; ret (col + len)
-  | Blank n => add_string (make_string n " "%char) ;; ret (col + n)
+  | Blank n => add_string (PrimString.make (int_of_nat n) " "%char63) ;; ret (col + n)
   | HardLine => 
     (* We should be in normal mode here. *)
-    add_string (make_string 1 "010"%char) ;; 
-    add_string (make_string indent " "%char) ;;
+    add_string (PrimString.make 1 10%int63) ;; 
+    add_string (PrimString.make (int_of_nat indent) " "%char63) ;;
     ret indent
   | IfFlat doc1 doc2 =>
       (* Print [doc1] or [doc2] depending on the current mode. *)
@@ -100,17 +101,24 @@ Fixpoint prettyM (doc : doc Ann) (flat : bool) (width indent col : nat) : M nat 
 (** [pp width doc] pretty-prints the document [doc],
     using a maximum character width of [width]. *)
 Definition ppM (width : nat) doc : M unit :=
-  prettyM doc false width 0 0 ;; ret tt.
+  (* We start in normal mode, but immediately decide if we should switch to flat mode
+     using a [group]. *)
+  prettyM (group doc) false width 0 0 ;; ret tt.
 
 End Rendering.
 
 (** * Basic MonadPPrint instance. *)
 
 (** [PPString A] is a monad that supports pretty-printing documents to strings,
-    and simply ignores annotations. *)
+    and simply ignores annotations. It is implemented as a state monad, where the 
+    state is the list of strings printed so far (with the most recent strings at
+    the head of the list). 
+    
+    Storing strings in this way allows delaying the actual concatenation until 
+    the very end, avoiding the classic quadratic issue with repeated string concatenation. *)
 Definition PPString A := list string -> A * list string.
 
-(** Monad instance. *)
+(** Monad instance : just a state monad. *)
 Instance monad_ppstring : Monad PPString :=
 {
   ret _ x ls := (x, ls) ;
@@ -130,5 +138,5 @@ Instance monad_pprint_ppstring {Ann : Type} : MonadPPrint Ann PPString :=
 (** [pp_string width d] pretty-prints the document [d] to a string, 
     ignoring all annotations. *)
 Definition pp_string {Ann} (width : nat) (d : doc Ann) : string :=
-  let '(_, output) := @ppM Ann PPString _ monad_pprint_ppstring width d [] in
-  List.fold_left String.append (List.rev output) EmptyString.
+  let '(_, output) := @ppM Ann PPString _ _ width d [] in
+  List.fold_left PrimString.cat (List.rev output) (PrimString.make 0 0%int63).
