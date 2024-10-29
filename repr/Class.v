@@ -29,10 +29,9 @@ Class Repr A : Type :=
 
 (** [repr x] prints [x] to a string [s], such that :
     - [s] is parseable by Coq.
-    - [s] parses to a value which is equal to [x] (definitionally equal, 
-      although not necessarily syntactically equal). 
+    - [s] parses to a value which is (definitionally) equal to [x]. 
     
-    For instance, if [l] is equal to [List.app [1; 2] [3; 4]] 
+    For instance, if [l] is equal to [[1; 2] ++ [3; 4]] 
     then [repr l] could be the string "[1; 2; 3; 4]". *)
 Definition repr {A : Type} `{Repr A} (a : A) := 
   (* We use a maximum character width of 80, which is standard for a text document.

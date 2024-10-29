@@ -1,9 +1,9 @@
 (** This file implements a Coq command that automatically derives [Repr] instances
     for inductives and records. *)
 
+From Coq Require Import PrimString List.
 From MetaCoq.Template Require Import All Pretty.
 From MetaCoq.Utils Require Import monad_utils.
-From Coq Require Import String List.
 From PPrint Require Import All.
 From Repr Require Import Class Utils LocallyNameless Class.
 From ReductionEffect Require Import PrintingEffect.
@@ -13,17 +13,17 @@ Open Scope list_scope.
 
 Set Universe Polymorphism.
 
-(** TODO : this is for debugging. *)
-Axiom evar_axiom : forall A, A.
-MetaCoq Quote Definition quoted_evar_axiom := evar_axiom.
-
 (** Pretty-print the constructor argument [arg]. *)
 Definition repr_arg {A} `{Repr A} (arg : A) : doc unit :=
   repr_doc (S app_precedence) arg.
 
-(** Pretty-print the application of constructor [label] to a list of arguments [args]. *)
-Definition repr_ctor (min_prec : nat) (label : string) (args : list (doc unit)) : doc unit :=
+(** Pretty-print the application of constructor [label] to a list of arguments [args].
+    Due to a bug in MetaCoq it is impossible to quote primitive strings : [repr_ctor] thus
+    takes in a bytestring instead, and performs the conversion everytime it is called. 
+    This is obviously slightly inefficient.  *)
+Definition repr_ctor (min_prec : nat) (label : bstring) (args : list (doc unit)) : doc unit :=
   (*let res := separate (break 1) (str label :: args) in*)
+  let label := pstring_of_bytestring label in
   let res := 
     match args with 
     | [] => str label
@@ -52,8 +52,8 @@ Monomorphic Inductive vec A : nat -> Type :=
 Fixpoint repr_vec (A : Type) n (_ : Repr A) (prec : nat) (xs : vec A n) {struct xs} : doc unit :=
   let inst A' n' RA' := Build_Repr _ (repr_vec A' n' RA') in
   match xs with 
-  | VNil => repr_ctor prec "VNil" []
-  | VCons n x xs => repr_ctor prec "VCons" [repr_arg n; repr_arg x; repr_arg xs]
+  | VNil => repr_ctor prec "VNil"%bs []
+  | VCons n x xs => repr_ctor prec "VCons"%bs [repr_arg n; repr_arg x; repr_arg xs]
   end.
 
 Monomorphic Inductive tree A : nat -> A -> Type :=
@@ -70,8 +70,8 @@ Definition repr_tree :=
     (prec : nat) (xs : tree A n a) {struct xs} : doc unit :=
     let _ := fun (A' : Type) (n' : nat) (a' : A') (RA' : Repr A') => Build_Repr _ (f A' n' a' RA') in 
     match xs with 
-    | Leaf a => repr_ctor prec "Leaf" [repr_arg a]
-    | Node a n m x l r => repr_ctor prec "Node" [repr_arg a ; repr_arg n; repr_arg m ; repr_arg x; repr_arg l; repr_arg r]
+    | Leaf a => repr_ctor prec "Leaf"%bs [repr_arg a]
+    | Node a n m x l r => repr_ctor prec "Node"%bs [repr_arg a ; repr_arg n; repr_arg m ; repr_arg x; repr_arg l; repr_arg r]
     end.
 
 (*Definition repr_tree' {A} {RA : Repr A} : Repr (tree A) := Build_Repr _ (repr_tree A RA).
@@ -181,10 +181,6 @@ Definition build_func_ty ctx (ind : inductive) (ind_body : one_inductive_body) (
   (* Make the final product. *)
   mk_prods ctx (params ++ indices ++ param_insts ++ [prec; x]) quoted_doc_unit.
 
-(* TODO : this is for debugging. *)
-Definition letin (A : Type) (x : A) (y : doc unit) := y.
-MetaCoq Quote Definition quoted_letin := letin. 
-
 (** Build the raw function. *)
 Definition build_func ctx (ind : inductive) (ind_body : one_inductive_body) (ctor_names : list term) 
   (uinst : Instance.t) : term :=
@@ -202,15 +198,10 @@ Definition build_func ctx (ind : inductive) (ind_body : one_inductive_body) (cto
   (* Build the match. *)
   let body := build_match ctx ind ind_body uinst (List.map tVar params) (tVar x) ctor_names (tVar prec) in
   (* Abstract over all the variables. *)
-  mk_fix ctx fix_param (List.length params + List.length indices + List.length param_insts + 1) $ 
+  mk_fix ctx fix_param (List.length params + List.length indices + List.length param_insts + 1) $
     mk_lambdas ctx (params ++ indices ++ param_insts ++ [prec; x]) $ 
-      mk_lets ctx [rec_inst] $
-        (* This is a hack : for some reason without this the let-in gets reduced when adding the 
-         definition to the global environment.
-         In the future we will return only [body]. *)
-         body.
-        (*mkApps quoted_letin [NamedCtx.get_type ctx rec_inst ; tVar rec_inst ; body].*)
-
+      mk_lets ctx [rec_inst] body.
+        
 Definition unquote_func (func_ty : Type) (func : term) : TemplateMonad func_ty := 
   tmUnquoteTyped func_ty func.
 
@@ -225,17 +216,17 @@ Definition build_instance (env : global_env) (ind : inductive) : TemplateMonad u
   (* Quote the constructor names. *)
   mlet ctor_names <- 
     monad_map 
-      (fun c => tmQuote =<< tmEval cbv (bytestring.String.to_string c.(cstr_name))) 
+      (fun c => tmQuote =<< tmEval cbv c.(cstr_name)) 
       ind_body.(ind_ctors)
   ;;
   (* Build the function type. *)
   mlet func_ty <- tmUnquoteTyped Type (build_func_ty NamedCtx.empty ind ind_body []) ;;
-  tmPrint "FUNC_TY" ;;
+  tmPrint "FUNC_TY"%pstring ;;
   tmPrint func_ty ;;
   (* Build the function term. *)
   let quoted_func := build_func NamedCtx.empty ind ind_body ctor_names [] in
   mlet func <- unquote_func func_ty quoted_func ;;
-  tmPrint "FUNC" ;;
+  tmPrint "FUNC"%pstring ;;
   tmPrint func.
   (* Quote again and add the definition. *)
   (*mlet quoted_func' <- tmQuote func ;;
@@ -280,20 +271,9 @@ Polymorphic Inductive poption (A : Type) :=
   | PSome : A -> poption A. 
 
 (* TODO : the evars are still not solved. *)
-(*Unset MetaCoq Strict Unquote Universe Mode.
+Unset MetaCoq Strict Unquote Universe Mode.
 MetaCoq Run (derive tree).
 
-Definition x := (fix fix_param
-(A : Type) (H : nat) (H0 : Repr A) (min_prec : nat) 
-(x : vec A H) {struct x} : doc unit :=
-let rec_inst :=
-fun (A0 : Type) (H1 : nat) (H2 : Repr A0) =>
-  {| repr_doc := fix_param A0 H1 H2 |} in
-match x with
-| @VNil _ => repr_ctor min_prec "VNil" []
-| @VCons _ n x0 x1 =>
-    repr_ctor min_prec "VCons" [repr_arg n; repr_arg x0; repr_arg x1]
-end).
 
 (*Record color := { red : list nat * list nat ; green : list nat ; blue : list nat }. 
 

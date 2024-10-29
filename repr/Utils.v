@@ -1,6 +1,6 @@
-From MetaCoq.Utils Require Import monad_utils MCList.
+From MetaCoq.Utils Require Import monad_utils MCList MCString.
 From MetaCoq.Template Require Import All.
-From Coq Require Import Decimal String Ascii List.
+From Coq Require Import Decimal List PrimInt63 PrimString.
 
 Import ListNotations MCMonadNotation.
 Open Scope string_scope.
@@ -10,25 +10,50 @@ Set Universe Polymorphism.
 (** A convenient notation for function application, which saves many parentheses. *)
 Notation "f $ x" := (f x) (at level 10, x at level 100, right associativity, only parsing).
 
-(** [string_of_uint n] prints the uint [n] to a string in base 10. *)
-Fixpoint string_of_uint (n : uint) :=
+(** Some notations to avoid confusing string types. *)
+Notation pstring := PrimString.string.
+Notation bstring := bytestring.string.
+
+(** [pstring_of_uint n] prints the uint [n] to a primitive string in base 10. *)
+Fixpoint pstring_of_uint (n : uint) : pstring :=
   match n with
-  | Nil => ""
-  | D0 n => String "0" (string_of_uint n)
-  | D1 n => String "1" (string_of_uint n)
-  | D2 n => String "2" (string_of_uint n)
-  | D3 n => String "3" (string_of_uint n)
-  | D4 n => String "4" (string_of_uint n)
-  | D5 n => String "5" (string_of_uint n)
-  | D6 n => String "6" (string_of_uint n)
-  | D7 n => String "7" (string_of_uint n)
-  | D8 n => String "8" (string_of_uint n)
-  | D9 n => String "9" (string_of_uint n)
+  | Nil => make 0%int63 " "
+  | D0 n => cat (make 1 "0") (pstring_of_uint n)
+  | D1 n => cat (make 1 "1") (pstring_of_uint n)
+  | D2 n => cat (make 1 "2") (pstring_of_uint n)
+  | D3 n => cat (make 1 "3") (pstring_of_uint n)
+  | D4 n => cat (make 1 "4") (pstring_of_uint n)
+  | D5 n => cat (make 1 "5") (pstring_of_uint n)
+  | D6 n => cat (make 1 "6") (pstring_of_uint n)
+  | D7 n => cat (make 1 "7") (pstring_of_uint n)
+  | D8 n => cat (make 1 "8") (pstring_of_uint n)
+  | D9 n => cat (make 1 "9") (pstring_of_uint n)
   end.
 
-(** [string_of_nat n] prints the natural number [n] to a string in base 10. *)
-Definition string_of_nat n : string :=
-  string_of_uint (Nat.to_uint n).
+(** [pstring_of_nat n] prints the natural number [n] to a primitive string in base 10. *)
+Definition pstring_of_nat n : pstring :=
+  pstring_of_uint (Nat.to_uint n).
+
+(** [int_of_nat n] converts the natural [n] to a primitive integer. *)
+Definition int_of_nat (n : nat) : int :=
+  let fix loop i n :=
+    match n with 
+    | 0 => i
+    | S n => loop (add 1%int63 i) n 
+    end 
+  in 
+  loop 0%int63 n.
+
+Definition pstring_of_bytestring (bstr : bstring) : pstring :=
+  let fix loop pstr bstr :=
+    match bstr with 
+    | String.EmptyString => pstr
+    | String.String byte bstr => 
+      let char := make 1 $ int_of_nat $ Byte.to_nat byte in
+      loop (cat pstr char) bstr
+    end
+  in
+  loop ""%pstring bstr.
 
 (** [monad_mapi f l] is the same as [monad_map f l] except the function [f]
     is fed the index of each argument. *)

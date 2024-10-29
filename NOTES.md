@@ -17,3 +17,11 @@ Ideally I use bytestrings (both in pprint and in repr), but I don't want pprint 
 Solutions ?
 - extract bytestrings to a separate library ?
 - eventually deprecate ascii strings in Coq stdlib ?
+
+# MetaCoq : quoting primitive strings
+
+Bug : 
+```
+MetaCoq Test Quote "hello"%pstring.
+(* (String.String "hello"%pstring) *) 
+```

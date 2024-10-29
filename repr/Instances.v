@@ -6,7 +6,7 @@
     "cons 1 (cons 2 (cons 3 nil))".
 *)
 
-From Coq Require Import List String.
+From Coq Require Import List PrimString.
 From PPrint Require Import All.
 From Repr Require Import Class Utils Deriving.
 
@@ -23,7 +23,7 @@ Definition paren_app (min_prec : nat) (app_doc : doc unit) : doc unit :=
 
 (** Representation of natural numbers. *)
 Instance repr_nat : Repr nat :=
-{ repr_doc _ n := str $ string_of_nat n }.
+{ repr_doc _ n := str $ pstring_of_nat n }.
 
 (** Representation of strings. *)
 Instance repr_string : Repr string :=
@@ -57,8 +57,6 @@ Instance repr_option `{Repr A} : Repr (option A) :=
         str "Some" ^+^ repr_doc (S app_precedence) x
     end
 }.
-
-Eval compute in repr $ Some (Some (Some 42)).
 
 Inductive expr := 
   | ENat : nat -> expr 
