@@ -2,11 +2,10 @@
     for inductives and records. *)
 
 From Coq Require Import PrimString List.
-From MetaCoq.Template Require Import All Pretty.
+From MetaCoq.Template Require Import All.
 From MetaCoq.Utils Require Import monad_utils.
 From PPrint Require Import All.
 From Repr Require Import Class Utils LocallyNameless Class.
-From ReductionEffect Require Import PrintingEffect.
 
 Import ListNotations MCMonadNotation.
 Open Scope list_scope.
@@ -28,57 +27,6 @@ Definition repr_ctor (min_prec : nat) (label : pstring) (args : list (doc unit))
   in
   group $ hang 2 res.
 
-(** SCRATCH *)
-
-
-Instance repr_nat : Repr nat :=
-{ repr_doc _ n := str $ pstring_of_nat n }.
-
-Instance repr_list {A} `{Repr A} : Repr (list A) :=
-{
-  repr_doc _ l := 
-    let contents := flow_map (str ";" ^^ break 1) (repr_doc 0) l in
-    group $ bracket "[" contents "]"
-}.
-
-Monomorphic Inductive vec A : nat -> Type :=
-  | VNil : vec A 0
-  | VCons : forall n, A -> vec A n -> vec A (S n).
-
-Fixpoint repr_vec_test (A : Type) n (_ : Repr A) (prec : nat) (xs : vec A n) {struct xs} : doc unit :=
-  let inst A' n' RA' := Build_Repr _ (repr_vec_test A' n' RA') in
-  match xs with 
-  | VNil => repr_ctor prec "VNil" []
-  | VCons n x xs => repr_ctor prec "VCons" [repr_arg n; repr_arg x; repr_arg xs]
-  end.
-
-Monomorphic Inductive tree A : nat -> A -> Type :=
-  | Leaf : forall a : A, tree A 0 a 
-  | Node : forall a n m, A -> tree (list A) n [a] -> tree A m a -> tree A (n + m) a.
-Arguments Leaf {A}.
-Arguments Node {A}.
-  
-Definition repr_tree_test :=
-  fix f 
-    (A : Type) 
-    (n : nat) (a : A) 
-    (RA : Repr A) 
-    (prec : nat) (xs : tree A n a) {struct xs} : doc unit :=
-    let _ := fun (A' : Type) (n' : nat) (a' : A') (RA' : Repr A') => Build_Repr _ (f A' n' a' RA') in 
-    match xs with 
-    | Leaf a => repr_ctor prec "Leaf" [repr_arg a]
-    | Node a n m x l r => repr_ctor prec "Node" [repr_arg a ; repr_arg n; repr_arg m ; repr_arg x; repr_arg l; repr_arg r]
-    end.
-
-(*Definition repr_tree' {A} {RA : Repr A} : Repr (tree A) := Build_Repr _ (repr_tree A RA).
-Existing Instance repr_tree'.
-
-Instance : Repr bool := { repr_doc b := if b then str "true" else str "false" }.
-
-Eval compute in repr $ Node true (Node [true; false; true] Leaf Leaf) (Node false Leaf Leaf).*)
-
-(** END SCRATCH *)
-
 (** Quote some terms that we will need below. *)
 MetaCoq Quote Definition quoted_repr_arg := (@repr_arg).
 MetaCoq Quote Definition quoted_repr_ctor := (@repr_ctor).
@@ -89,6 +37,74 @@ MetaCoq Quote Definition quoted_nat := (nat).
 MetaCoq Quote Definition quoted_Repr := (Repr).
 MetaCoq Quote Definition quoted_Build_Repr := (Build_Repr).
 
+(** * Pure code. *)
+
+(** For technical reasons related to fixpoints and nested inductives, building the [Repr] 
+    instance the traditional way :
+    [
+      Instance repr_list A (Repr A) : Repr (list A) :=
+      { 
+        repr_doc := 
+          fix f prec x : doc unit := ... 
+      }
+    ] 
+    does not work in general.
+
+    Instead, I build the instance in two steps. First build a _raw function_ with return type [doc unit] :
+    [
+      Fixpoint raw_func A (Repr A) (prec : nat) (x : list A) : doc unit := ...
+    ]
+    and then package it in an instance :
+    [
+      Instance repr_list A (RA : Repr A) : Repr (list A) :=
+      { repr_doc := raw_func A RA }
+    ] 
+*)
+
+(** In general the raw function takes many inputs : we package them in a record. *)
+Record inputs :=
+  { (** The parameters of the inductive, ordered from first to last. *)
+    params : list ident 
+  ; (** The indices of the inductive, ordered from first to last. *)
+    indices : list ident 
+  ; (** A [Repr] instance for each parameter. *)
+    insts : list ident
+  ; (** The precedence level (of type [nat]). *)
+    prec : ident 
+  ; (** The object to pretty-print (of type [ind params indices]). *)
+    x : ident }.
+
+(** [input_vars inp] is a helper function to get the list of all inputs to the raw function,
+    in the same order the function is supposed to take them. *)
+Definition input_vars (inp : inputs) : list ident :=
+  List.concat [inp.(params); inp.(indices); inp.(insts); [inp.(prec); inp.(x)]]. 
+
+(** Same as [input_inst_vars], but without [prec] and [x]. *)
+Definition input_inst_vars (inp : inputs) : list ident :=
+  List.concat [inp.(params); inp.(indices); inp.(insts)]. 
+
+(** [apply_ind pi inp] is a helper function to apply the inductive [pi] to
+    the parameters and indices in the inputs [inp]. *)
+Definition apply_ind (pi : packed_inductive) (inp : inputs) : term :=
+  mkApps (tInd pi.(pi_ind) []) $ List.map tVar $ inp.(params) ++ inp.(indices).
+
+(** Helper function to add the raw function's inputs to the context. *)
+Definition with_func_inputs {T} ctx (pi : packed_inductive) (k : NamedCtx.t -> inputs -> T) : T :=
+  (* Declare the inductive parameters. *)
+  with_ind_params ctx pi $ fun ctx params =>
+  (* Declare the inductive indices. *)
+  with_ind_indices ctx pi (List.map tVar params) $ fun ctx indices =>
+  (* Declare a Repr instance for each parameter. *)
+  let repr_decls := List.map (fun p => mk_decl "H"%bs $ mkApp quoted_Repr p) (List.map tVar params) in
+  with_decls ctx repr_decls $ fun ctx insts =>
+  (* Declare the minimum precedence [min_prec]. *)
+  with_decl ctx (mk_decl "min_prec"%bs quoted_nat) $ fun ctx prec =>
+  (* Declare the input parameter [x]. *)
+  let I := mkApps (tInd pi.(pi_ind) []) $ List.map tVar $ params ++ indices in
+  with_decl ctx (mk_decl "x"%bs I) $ fun ctx x =>  
+  (* Call the continuation. *)
+  k ctx (Build_inputs params indices insts prec x).
+  
 (** [term_list ty xs] builds the term corresponding to the list [x1; ...; xn], 
     assuming each [xi] has type [ty]. *)
 Fixpoint term_list (ty : term) (xs : list term) : term :=
@@ -96,162 +112,135 @@ Fixpoint term_list (ty : term) (xs : list term) : term :=
   | [] => mkApp quoted_nil ty
   | x :: xs => mkApps quoted_cons [ty; x; term_list ty xs]
   end.
-
-(** [with_ind_vars ctx ind ind_body k] calls the continuation [k] 
-    with an extended context which contains :
-    - declarations for the parameters of the inductive [ind].
-    - declarations for the indices of the inductive [ind].
-    - declarations for instances of [Repr] for each parameter (not for indices).
-
-    This is a common pattern that is reused several times below. *)
-Definition with_ind_vars {T} ctx (ind_body : one_inductive_body) 
-  (k : NamedCtx.t -> list ident -> list ident -> list ident -> T) : T :=
-  (* Declare the inductive parameters. *)
-  with_ind_params ctx ind_body $ fun ctx params =>
-  let param_terms := List.map tVar params in
-  (* Declare the inductive indices. *)
-  with_ind_indices ctx ind_body param_terms $ fun ctx indices =>
-  (* Declare a Repr instance for each parameter. *)
-  let repr_decls := List.map (fun p => mk_decl "H"%bs $ mkApp quoted_Repr p) param_terms in
-  with_decls ctx repr_decls $ fun ctx param_insts =>
-    (* Call the continuation. *)
-    k ctx params indices param_insts.
-
+   
 (** Build a single argument. *)
 Definition build_arg ctx (arg : ident) : term :=
   (* I use an evar in place of the [Repr] instance, which will be solved when unquoting the term. *)
-  let evar := fresh_evar ctx in
-  (*let evar := mkApp quoted_evar_axiom $ mkApp quoted_Repr $ NamedCtx.get_type ctx arg in*)
-  ret $ mkApps quoted_repr_arg [NamedCtx.get_type ctx arg; evar; tVar arg].
+  mkApps quoted_repr_arg [NamedCtx.get_type ctx arg; fresh_evar ctx; tVar arg].
 
 (** Build a branch for a single constructor. *)
-Definition build_branch ctx (ind : term) (params : list term) (prec : term)
-  (ctor_body : constructor_body) (quoted_ctor_name : term) : branch term :=
+Definition build_branch ctx (inp : inputs) (pc : packed_constructor) (quoted_ctor_name : term) : branch term :=
   (* Get the list of arguments of the constructor. *)
-  with_ctor_args ctx ctor_body ind params $ fun ctx args =>
+  with_ctor_args ctx pc (List.map tVar inp.(params)) $ fun ctx args =>
   (* Apply [repr_ctor] to the precedence, label and the arguments. *)
   let repr_args := term_list quoted_doc_unit $ List.map (build_arg ctx) args in
-  mk_branch ctx args $ mkApps quoted_repr_ctor [prec; quoted_ctor_name; repr_args].
+  mk_branch ctx args $ mkApps quoted_repr_ctor [tVar inp.(prec); quoted_ctor_name; repr_args].
 
-(* fun (A' : Type) (H' : Repr A') => Build_Repr (mylist A') (fix_param A' H') *)
-
-(** Bind the recursive [Repr] instance. *)
-Definition with_rec_inst {T} ctx (ind_body : one_inductive_body) (ind : term) (fix_param : term) (k : NamedCtx.t -> ident -> T) : T :=
-  let (ty, body) := 
-    with_ind_vars ctx ind_body $ fun ctx params indices param_insts =>
-    let I := mkApps ind $ List.map tVar $ params ++ indices in
-    let body := mkApps fix_param $ List.map tVar $ params ++ indices ++ param_insts in
-    ( mk_prods ctx (params ++ indices ++ param_insts) $ mkApp quoted_Repr I
-    , mk_lambdas ctx (params ++ indices ++ param_insts) $ mkApps quoted_Build_Repr [I ; body])
+(** Bind the recursive [Repr] instance using a let-in. *)
+Definition with_rec_inst {T} ctx (pi : packed_inductive) (fix_param : term) (k : NamedCtx.t -> ident -> T) : T :=
+  let body := 
+    with_func_inputs ctx pi $ fun ctx inp =>
+    let body := mkApps fix_param $ List.map tVar $ inp.(params) ++ inp.(indices) ++ inp.(insts) in
+    mk_lambdas ctx (inp.(params) ++ inp.(indices) ++ inp.(insts)) $ 
+      mkApps quoted_Build_Repr [apply_ind pi inp ; body]
   in 
   let decl := 
     {| decl_name := {| binder_name := nNamed "rec_inst"%bs ; binder_relevance := Relevant |}
-    ;  decl_type := ty
+    ;  decl_type := fresh_evar ctx
     ;  decl_body := Some body |}
   in
   with_decl ctx decl k.
 
 (** Build the case expression. *)
-Definition build_match ctx (ind : inductive) (ind_body : one_inductive_body) (uinst : Instance.t)
-  (params : list term) (x : term) (ctor_names : list term) (prec : term) : term :=
+Definition build_match ctx (pi : packed_inductive) (inp : inputs) (ctor_names : list term) : term :=
   (* Case info. *)  
-  let ci := {| ci_ind := ind ; ci_npar := List.length params ; ci_relevance := Relevant |} in
+  let ci := {| ci_ind := pi.(pi_ind) ; ci_npar := pi.(pi_mbody).(ind_npars) ; ci_relevance := Relevant |} in
   (* Case predicate. *)
   let pred := 
-    with_ind_indices ctx ind_body params $ fun ctx indices =>
-    with_decl ctx (mk_decl "x"%bs $ mkApps (tInd ind uinst) params) $ fun ctx x => 
+    let params := List.map tVar inp.(params) in
+    with_ind_indices ctx pi params $ fun ctx indices =>
+    with_decl ctx (mk_decl "x"%bs $ mkApps (tInd pi.(pi_ind) []) params) $ fun ctx x => 
       mk_pred ctx params indices x quoted_doc_unit
   in
   (* Case branches. *)
-  let branches := map2 (build_branch ctx (tInd ind uinst) params prec) ind_body.(ind_ctors) ctor_names in
+  let branches := map2 (build_branch ctx inp) (pi_ctors pi) ctor_names in
   (* Result. *)
-  tCase ci pred x branches.
+  tCase ci pred (tVar inp.(x)) branches.
 
 (** Build the raw function's type. *)
-Definition build_func_ty ctx (ind : inductive) (ind_body : one_inductive_body) (uinst : Instance.t) : term :=
-  with_ind_vars ctx ind_body $ fun ctx params indices param_insts =>
-  (* Declare the precedence and inductive element. *)
-  with_decl ctx (mk_decl "min_prec"%bs quoted_nat) $ fun ctx prec =>
-  let I := mkApps (tInd ind uinst) $ List.map tVar $ params ++ indices in
-  with_decl ctx (mk_decl "x"%bs I) $ fun ctx x =>
-  (* Make the final product. *)
-  mk_prods ctx (params ++ indices ++ param_insts ++ [prec; x]) quoted_doc_unit.
+Definition build_func_ty ctx (pi : packed_inductive) : term :=
+  with_func_inputs ctx pi $ fun ctx inp =>
+    mk_prods ctx (input_vars inp) quoted_doc_unit.
 
-(** Build the raw function. *)
-Definition build_func ctx (ind : inductive) (ind_body : one_inductive_body) (ctor_names : list term) 
-  (uinst : Instance.t) : term :=
+(** Build the raw function (normal variant). *)
+Definition build_func_normal ctx (pi : packed_inductive) (ctor_names : list term) : term :=
+  with_func_inputs ctx pi $ fun ctx inp =>
+  let body := build_match ctx pi inp ctor_names in
+  mk_lambdas ctx (input_vars inp) body.
+
+(** Build the raw function (fixpoint variant). *)
+Definition build_func_fix ctx (pi : packed_inductive) (ctor_names : list term) : term :=
   (* Declare the fixpoint parameter. *)
-  with_decl ctx (mk_decl "fix_param"%bs $ build_func_ty ctx ind ind_body uinst) $ fun ctx fix_param =>
-  (* Declare the inductive parameters, indices and [Repr] instances. *)
-  with_ind_vars ctx ind_body $ fun ctx params indices param_insts =>
-  (* Declare the minimum precedence [min_prec]. *)
-  with_decl ctx (mk_decl "min_prec"%bs quoted_nat) $ fun ctx prec =>
-  (* Declare the input parameter [x]. *)
-  let I := mkApps (tInd ind uinst) $ List.map tVar $ params ++ indices in
-  with_decl ctx (mk_decl "x"%bs I) $ fun ctx x =>  
+  with_decl ctx (mk_decl "fix_param"%bs $ build_func_ty ctx pi) $ fun ctx fix_param =>
+  (* Declare the function inputs. *)
+  with_func_inputs ctx pi $ fun ctx inp =>
   (* Add a let-binding for the recursive [Repr] instance. *)
-  with_rec_inst ctx ind_body (tInd ind uinst) (tVar fix_param) $ fun ctx rec_inst =>
+  with_rec_inst ctx pi (tVar fix_param) $ fun ctx rec_inst =>
   (* Build the match. *)
-  let body := build_match ctx ind ind_body uinst (List.map tVar params) (tVar x) ctor_names (tVar prec) in
+  let body := build_match ctx pi inp ctor_names in
   (* Abstract over all the variables. *)
-  mk_fix ctx fix_param (List.length params + List.length indices + List.length param_insts + 1) $
-    mk_lambdas ctx (params ++ indices ++ param_insts ++ [prec; x]) $ 
+  mk_fix ctx fix_param (pred $ List.length (input_vars inp)) $
+    mk_lambdas ctx (input_vars inp) $ 
       mk_lets ctx [rec_inst] body.
-      
-Definition package_inst ctx (ind : inductive) (ind_body : one_inductive_body) (func : term) : term :=
-  with_ind_vars ctx ind_body $ fun ctx params indices param_insts =>
-    mk_lambdas ctx (params ++ indices ++ param_insts) $
-      let I := mkApps (tInd ind []) $ List.map tVar $ params ++ indices in
-      let contents := mkApps func $ List.map tVar $ params ++ indices ++ param_insts in
-      mkApps quoted_Build_Repr [I; contents].
+
+(** [build_inst ctx pi func] builds the [Repr] instance corresponding 
+    to the raw function [func]. *)
+Definition build_inst ctx (pi : packed_inductive) (func : term) : term :=
+  with_func_inputs ctx pi $ fun ctx inp =>
+  mk_lambdas ctx (input_inst_vars inp) $
+    let contents := mkApps func $ List.map tVar $ input_inst_vars inp in
+    mkApps quoted_Build_Repr [apply_ind pi inp; contents].
+
+(** * Effectful code. *)
 
 (** Small helper function to deal with universe issues. *)
 Definition unquote_func (func_ty : Type) (func : term) : TemplateMonad func_ty := 
   tmUnquoteTyped func_ty func.
 
-(** Derive command entry-point. *)
-Definition derive {A} (instance_hints : hint_locality) (raw_ind : A) : TemplateMonad unit :=
+(** [lookup_packed_inductive t] gathers in a [packed_inductive] the data
+    pertaining to the inductive [t]. This assumes [t] is of the form [tInd _ _],
+    i.e. it is not applied to any parameters or indices. *)
+Definition lookup_packed_inductive {A} (raw_ind : A) : TemplateMonad packed_inductive :=
   (* Get the inductive. *)
-  mlet quoted_ind <- tmQuote raw_ind ;;
+  mlet (env, quoted_ind) <- tmQuoteRec raw_ind ;;
   mlet ind <- 
     match quoted_ind with 
     | tInd ind _ => ret ind
-    | _ => tmFail "Not an inductive"%bs
+    | _ => tmFail "Not an inductive."%bs
     end
   ;; 
-  (* Get the global environment needed to type the inductive. *)
-  mlet env <- env_of_terms [quoted_ind; quoted_doc_unit; quoted_Repr] ;;
   (* Get the inductive body. *)
   mlet (mind_body, ind_body) <- 
     match lookup_inductive env ind with 
-    | None => tmFail "Failed looking up the inductive body"%bs
+    | None => tmFail "Inductive is not declared."%bs
     | Some bodies => ret bodies 
     end 
   ;;
-  (* Quote the constructor names. *)
+  (* Pack everything. *)
+  ret {| pi_ind := ind ; pi_body := ind_body ; pi_mbody := mind_body |}.
+  
+(** Derive command entry-point. *)
+Definition derive {A} (hints : hint_locality) (raw_ind : A) : TemplateMonad unit :=
+  (* Lookup the inductive. *)
+  mlet pi <- lookup_packed_inductive raw_ind ;;
+  (* Quote the constructor names. For efficiency reasons we do this 
+     at the toplevel, in order to keep as much code outside of TemplateMonad. *)
   let ctor_names :=
-    List.map 
-      (fun c => tString $ pstring_of_bytestring c.(cstr_name)) 
-      ind_body.(ind_ctors)
+    List.map (fun pc => tString $ pstring_of_bytestring pc.(pc_body).(cstr_name)) (pi_ctors pi)
   in
-  (* Build the function type. *)
-  mlet func_ty <- tmUnquoteTyped Type (build_func_ty NamedCtx.empty ind ind_body []) ;;
-  tmPrint "FUNC_TY"%pstring ;;
-  tmPrint func_ty ;;
-  (* Build the function term. Unquoting allows to solve evars. *)
-  mlet func <- unquote_func func_ty (build_func NamedCtx.empty ind ind_body ctor_names []) ;;
-  tmPrint "FUNC"%pstring ;;
-  tmPrint func ;;
-  (* Package the function to create an instance using [Build_Repr]. *)
+  (* Build the function type and term. Unquoting using tmUnquoteTyped allows to solve evars. *)
+  mlet func_ty <- tmUnquoteTyped Type (build_func_ty NamedCtx.empty pi) ;;
+  mlet func <- unquote_func func_ty (build_func_fix NamedCtx.empty pi ctor_names) ;;
+  (* Package the raw function using [Build_Repr]. *)
   mlet quoted_func <- tmQuote func ;;
-  let inst := package_inst NamedCtx.empty ind ind_body quoted_func in
+  let inst := build_inst NamedCtx.empty pi quoted_func in
   (* Add the instance to the global environment. *)
-  let inst_name := ("repr_" ++ ind_body.(ind_name))%bs in
+  let inst_name := ("repr_" ++ pi.(pi_body).(ind_name))%bs in
   tmMkDefinition inst_name inst ;;
   (* Declare it as an instance of [Repr]. *)
   mlet inst_ref <- tmLocate1 inst_name ;;
-  tmExistingInstance instance_hints inst_ref.
-  
+  tmExistingInstance hints inst_ref.
+
 Definition derive_local {A} := @derive A local. 
 Definition derive_global {A} := @derive A global. 
 Definition derive_export {A} := @derive A export. 
@@ -277,9 +266,11 @@ Polymorphic Inductive poption (A : Type) :=
   | PSome : A -> poption A. 
 
 Unset MetaCoq Strict Unquote Universe Mode.
-MetaCoq Run (derive export vec).
+MetaCoq Run (derive export myind).
 
-Print repr_vec.
+Print repr_myind.
+Eval compute in Print repr_vec.
+repr [true; false; true; false; true].
 
 Fixpoint v n : vec bool n :=
   match n with 

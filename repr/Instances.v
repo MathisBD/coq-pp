@@ -27,7 +27,7 @@ Definition paren_app (min_prec : nat) (app_doc : doc unit) : doc unit :=
 Instance repr_nat : Repr nat :=
 { repr_doc _ n := str $ pstring_of_nat n }.
 
-Instance repr_pstring : Repr PrimString.string :=
+Instance repr_primstring : Repr PrimString.string :=
 { repr_doc _ s := group $ bracket """" (str s) """" }.
 
 Instance repr_string : Repr String.string :=
@@ -49,11 +49,11 @@ Instance repr_list `{Repr A} : Repr (list A) :=
 
 (** * Derived Instances. *)
 
-MetaCoq Run (derive_global bool).
+(*MetaCoq Run (derive_global bool).
 MetaCoq Run (derive_global option).
 MetaCoq Run (derive_global sum).
 
-(*Time Eval compute in repr (inr ([3; 4; 3; 42], [inl (true)])).
+Time Eval compute in repr (inr ([3; 4; 3; 42], [inl (true)])).
 
 Inductive expr := 
   | ENat : nat -> expr 

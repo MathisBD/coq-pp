@@ -81,6 +81,30 @@ Definition fresh_evar (ctx : NamedCtx.t) : term :=
   let args := List.map (fun '(id, _) => tVar id) (NamedCtx.decls ctx) in
   tEvar fresh_evar_id args.
 
+(** * Packaging inductives. *)
+
+(** In MetaCoq the information related to an inductive type is spread accross
+    three different datatypes : [inductive], [one_inductive_body] and [mutual_inductive_body].
+    One often needs access to all three, so I package them in a single datatype. *)
+Record packed_inductive := 
+  { pi_ind : inductive
+  ; pi_body : one_inductive_body 
+  ; pi_mbody : mutual_inductive_body }.
+
+(** Same as [packed_inductive] but for constructors. *)
+Record packed_constructor :=
+  { (** The inductive this constructor belongs to. *)
+    pc_pi : packed_inductive 
+  ; (** The index of this constructor. *)
+    pc_idx : nat 
+  ; (** The body of this constructor. *)
+    pc_body : constructor_body }.
+
+(** [pi_ctors pi] returns the list of [packed_constructors] of the 
+    packed inductive [pi]. *)
+Definition pi_ctors (pi : packed_inductive) : list packed_constructor :=
+  mapi (fun i ctor => {| pc_pi := pi ; pc_idx := i ; pc_body := ctor |}) pi.(pi_body).(ind_ctors).
+
 (** * Inspecting terms. *)
 
 (** [with_decl ctx decl k] generates a fresh identifier built from [decl.(decl_name)], 
@@ -181,41 +205,42 @@ Definition lambda_telescope_n {T} (ctx : NamedCtx.t) (n : nat) (t : term) (k : N
   in 
   loop ctx n [] t.
 
-(** [with_ind_params ctx ind_body k] declares the parameters of the inductive [ind_body] in the local context,
+(** [with_ind_params ctx pi k] declares the parameters of the inductive [pi] in the local context,
     and executes [k] with the extended context and parameters. 
     - [k] takes the parameters ordered from first to last. *)
-Definition with_ind_params {T} (ctx : NamedCtx.t) (ind_body : one_inductive_body) 
+Definition with_ind_params {T} (ctx : NamedCtx.t) (pi : packed_inductive) 
   (k : NamedCtx.t -> list ident -> T) : T :=
-  prod_telescope_n ctx (ind_param_count ind_body) ind_body.(ind_type) $ fun ctx params _ => k ctx params.
+  prod_telescope_n ctx pi.(pi_mbody).(ind_npars) pi.(pi_body).(ind_type) $ fun ctx params _ => 
+    k ctx params.
 
-(** [with_ind_indices ctx ind_body params k] declares the indices of the inductive [ind_body] in the local context,
+(** [with_ind_indices ctx pi params k] declares the indices of the inductive [pi] in the local context,
     and executes [k] with the extended context and indices. 
     - [k] takes the indices ordered from first to last.
     - [params] contains the parameters of the inductive, ordered from first to last. *)
-Definition with_ind_indices {T} (ctx : NamedCtx.t) (ind_body : one_inductive_body) 
+Definition with_ind_indices {T} (ctx : NamedCtx.t) (pi : packed_inductive) 
   (params : list term) (k : NamedCtx.t -> list ident -> T) : T :=
-  let indices := map_context_with_binders S (subst $ List.rev params) 0 ind_body.(ind_indices) in
+  let indices := map_context_with_binders S (subst $ List.rev params) 0 pi.(pi_body).(ind_indices) in
   with_context ctx indices k.
 
-(** [with_ctor_args ctx ctor_body ind params k] declares the arguments of the constructor [ctor_body] in the local context,
+(** [with_ctor_args ctx pc params k] declares the arguments of the constructor [ctor_body] in the local context,
     and executes [k] with the extended context and arguments. 
     - [k] takes the arguments ordered from first to last.
-    - [ind] is the inductive this constructor belongs to (not applied to any parameters).
     - [params] contains the parameters of the inductive, ordered from first to last. *)
-Definition with_ctor_args {T} (ctx : NamedCtx.t) (ctor_body : constructor_body) 
-  (ind : term) (params : list term) (k : NamedCtx.t -> list ident -> T) : T :=
+Definition with_ctor_args {T} (ctx : NamedCtx.t) (pc : packed_constructor)
+  (params : list term) (k : NamedCtx.t -> list ident -> T) : T :=
   (* Recall that the constructor arguments can depend on the inductive and on its parameters. *)
-  let args := map_context_with_binders S (subst $ List.rev (ind :: params)) 0 ctor_body.(cstr_args) in
+  let vars := List.rev (tInd pc.(pc_pi).(pi_ind) [] :: params) in
+  let args := map_context_with_binders S (subst vars) 0 pc.(pc_body).(cstr_args) in
   with_context ctx args k.
 
-(** [with_ctor_indices ind ctor_body params k] gets the _values_ of the indices of the constructor [ctor_body]
+(** [with_ctor_indices pc params k] gets the _values_ of the indices of the constructor [pc]
     (recall that the constructor indices can depend on the inductive [ind] and on the parameters [params]).
     - [k] takes the indices ordered from first to last.
-    - [ind] is the inductive this constructor belongs to.
     - [params] contains the parameters of the inductive, ordered from first to last. *)
-Definition with_ctor_indices {T} (ind : inductive) (ctor_body : constructor_body) (params : list term) (k : list term -> T) : T :=
+Definition with_ctor_indices {T} (pc : packed_constructor) (params : list term) (k : list term -> T) : T :=
   (* Recall that the construtor indices can depend on the inductive and on its parameters. *)
-  let indices := List.map (subst (List.rev (tInd ind [] :: params)) 0) ctor_body.(cstr_indices) in
+  let vars := List.rev (tInd pc.(pc_pi).(pi_ind) [] :: params) in
+  let indices := List.map (subst vars 0) pc.(pc_body).(cstr_indices) in
   k indices.
 
 (** * Constructing terms. *)
