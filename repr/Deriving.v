@@ -27,6 +27,33 @@ Definition repr_ctor (min_prec : nat) (label : pstring) (args : list (doc unit))
   in
   group $ hang 2 res.
 
+(*******************************************************)
+
+(*Inductive mlist (A : Type) : Type :=
+  | MNil : mlist A
+  | MCons : A -> moption A -> mlist A
+with moption (A : Type) : Type :=
+  | MSome : mlist A -> moption A.
+
+Fixpoint repr_mlist (A : Type) (RA : Repr A) (prec : nat) (x : mlist A) : doc unit :=
+  let _ := fun A' RA' => Build_Repr _ (repr_mlist A' RA') in
+  let _ := fun A' RA' => Build_Repr _ (repr_moption A' RA') in
+  match x with 
+  | MNil => repr_ctor prec "MNil" []
+  | MCons a1 a2 => repr_ctor prec "MCons" [repr_arg a1; repr_arg a2]
+  end
+with repr_moption (A : Type) (RA : Repr A) (prec : nat) (x : moption A) : doc unit :=
+  let _ := fun A' RA' => Build_Repr _ (repr_mlist A' RA') in
+  let _ := fun A' RA' => Build_Repr _ (repr_moption A' RA') in
+  match x with 
+  | MSome a => repr_ctor prec "MSome" [repr_arg a]
+  end.
+  
+Definition kname := (MPfile ["Deriving"%bs], "repr_mlist"%bs).
+MetaCoq Run (tmPrint =<< tmEval (unfold kname) repr_mlist).*)
+
+(*******************************************************)
+
 (** Quote some terms that we will need below. *)
 MetaCoq Quote Definition quoted_repr_arg := (@repr_arg).
 MetaCoq Quote Definition quoted_repr_ctor := (@repr_ctor).
@@ -202,23 +229,21 @@ Definition unquote_func (func_ty : Type) (func : term) : TemplateMonad func_ty :
     i.e. it is not applied to any parameters or indices. *)
 Definition lookup_packed_inductive {A} (raw_ind : A) : TemplateMonad packed_inductive :=
   (* Get the inductive. *)
-  mlet (env, quoted_ind) <- tmQuoteRec raw_ind ;;
+  mlet quoted_raw_ind <- tmQuote raw_ind ;;
   mlet ind <- 
-    match quoted_ind with 
-    | tInd ind _ => ret ind
-    | _ => tmFail "Not an inductive."%bs
+    match quoted_raw_ind with 
+    | tInd ind _ => ret ind 
+    | _ => tmFail "Not and inductive."%bs
     end
-  ;; 
-  (* Get the inductive body. *)
-  mlet (mind_body, ind_body) <- 
-    match lookup_inductive env ind with 
-    | None => tmFail "Inductive is not declared."%bs
-    | Some bodies => ret bodies 
-    end 
   ;;
-  (* Pack everything. *)
-  ret {| pi_ind := ind ; pi_body := ind_body ; pi_mbody := mind_body |}.
-  
+  (* Lookup the inductive body. *)
+  mlet mbody <- tmQuoteInductive ind.(inductive_mind) ;;
+  (* Assemble everything. *)
+  match List.nth_error mbody.(ind_bodies) ind.(inductive_ind) with 
+  | None => tmFail "internal error"%bs
+  | Some body => ret {| pi_ind := ind ; pi_body := body ; pi_mbody := mbody |}
+  end.
+
 (** Derive command entry-point. *)
 Definition derive {A} (hints : hint_locality) (raw_ind : A) : TemplateMonad unit :=
   (* Lookup the inductive. *)
@@ -241,7 +266,6 @@ Definition derive {A} (hints : hint_locality) (raw_ind : A) : TemplateMonad unit
     | BiFinite => ret build_func_normal 
     | Finite => 
       (* For inductives, we only need a fixpoint if the inductive is recursive. *)
-      tmPrint =<< tmEval cbv (is_pi_recursive pi) ;;
       ret $ if is_pi_recursive pi then build_func_fix else build_func_normal
     | CoFinite => tmFail "CoInductives are not supported."%bs 
     end
@@ -263,4 +287,4 @@ Definition derive {A} (hints : hint_locality) (raw_ind : A) : TemplateMonad unit
 Definition derive_local {A} := @derive A local. 
 Definition derive_global {A} := @derive A global. 
 Definition derive_export {A} := @derive A export. 
-
+      

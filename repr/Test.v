@@ -18,7 +18,7 @@ Instance repr_int63 : Repr int :=
 Instance repr_float : Repr float :=
 { repr_prec _ _ := str "#float" }.
 
-(*MetaCoq Run (derive_global cast_kind).
+MetaCoq Run (derive_global cast_kind).
 MetaCoq Run (derive_global name).
 MetaCoq Run (derive_global relevance).
 MetaCoq Run (derive_global binder_annot).
@@ -30,8 +30,7 @@ MetaCoq Run (derive_global predicate).
 MetaCoq Run (derive_global branch).
 MetaCoq Run (derive_global def).
 MetaCoq Run (derive_global projection).
-
-MetaCoq Run (derive_global term).*)
+MetaCoq Run (derive_global term).
 
 
 (*MetaCoq Quote Definition big_def := 
@@ -74,11 +73,5 @@ match doc with
           Monad.bind (exit_annot ann) (fun _ : unit => Monad.ret col0)))
 end).
   
-Time Eval compute in repr big_def.*)
-
-(* TODO : 
-   1. handle abbreviations of inductives (+ better error messages).
-   2. why is this slow ? 
-      MetaCoq Run (derive_global mfixpoint).
-      >> "Not and inductive" 
-*)
+Time Eval compute in repr big_def.
+Time Eval vm_compute in repr big_def.*)
