@@ -219,18 +219,37 @@ Definition lookup_packed_inductive {A} (raw_ind : A) : TemplateMonad packed_indu
   (* Pack everything. *)
   ret {| pi_ind := ind ; pi_body := ind_body ; pi_mbody := mind_body |}.
   
+Print mutual_inductive_body.
+
 (** Derive command entry-point. *)
 Definition derive {A} (hints : hint_locality) (raw_ind : A) : TemplateMonad unit :=
   (* Lookup the inductive. *)
   mlet pi <- lookup_packed_inductive raw_ind ;;
+  (* Check it is not a mutual inductive. *)
+  mlet _ <- 
+    match pi.(pi_mbody).(ind_bodies) with
+    | _ :: _ :: _=> tmFail "Mutual inductives are not supported."%bs
+    | _ => ret tt
+    end
+  ;;
   (* Quote the constructor names. For efficiency reasons we do this 
      at the toplevel, in order to keep as much code outside of TemplateMonad. *)
   let ctor_names :=
     List.map (fun pc => tString $ pstring_of_bytestring pc.(pc_body).(cstr_name)) (pi_ctors pi)
   in
-  (* Build the function type and term. Unquoting using tmUnquoteTyped allows to solve evars. *)
+  (* Build the raw function, choosing the right version. *)
+  mlet quoted_func <-
+    match pi.(pi_mbody).(ind_finite) with 
+    | BiFinite => ret $ build_func_normal NamedCtx.empty pi ctor_names 
+    | Finite => 
+      (* TODO : check if a fixpoint is actually needed. *)
+      ret $ build_func_fix NamedCtx.empty pi ctor_names
+    | CoFinite => tmFail "CoInductives are not supported."%bs 
+    end
+  ;;
+  (* Solve evars using unquoting. *)
   mlet func_ty <- tmUnquoteTyped Type (build_func_ty NamedCtx.empty pi) ;;
-  mlet func <- unquote_func func_ty (build_func_fix NamedCtx.empty pi ctor_names) ;;
+  mlet func <- unquote_func func_ty quoted_func ;;
   (* Package the raw function using [Build_Repr]. *)
   mlet quoted_func <- tmQuote func ;;
   let inst := build_inst NamedCtx.empty pi quoted_func in
@@ -264,9 +283,13 @@ Monomorphic Inductive empty_vec : nat -> Type :=
 Polymorphic Inductive poption (A : Type) :=
   | PNone : poption A
   | PSome : A -> poption A. 
+Record color := { red : bool ; blue : bool ; green : bool }.
 
 Unset MetaCoq Strict Unquote Universe Mode.
-MetaCoq Run (derive export myind).
+MetaCoq Run (derive_export color).
+
+Print repr_color.
+Print repr_option.
 
 Print repr_myind.
 Eval compute in Print repr_vec.

@@ -1,4 +1,4 @@
-From Coq Require Import PrimString.
+From Coq Require Import PrimString Uint63 PrimFloat.
 From MetaCoq.Template Require Import All.
 From Repr Require Import All Utils.
 
@@ -12,15 +12,45 @@ Instance repr_bytestring : Repr bytestring.string :=
 Instance repr_sort : Repr sort :=
 { repr_doc _ _ := str "#sort" }.
 
+Instance repr_int63 : Repr int :=
+{ repr_doc _ x := str $ pstring_of_nat $ to_nat x }.
+
+Instance repr_float : Repr float :=
+{ repr_doc _ _ := str "#float" }.
+
 MetaCoq Run (derive_global cast_kind).
 MetaCoq Run (derive_global name).
+MetaCoq Run (derive_global relevance).
+MetaCoq Run (derive_global binder_annot).
 MetaCoq Run (derive_global modpath).
+MetaCoq Run (derive_global Level.t_).
+MetaCoq Run (derive_global inductive).
+MetaCoq Run (derive_global case_info).
+MetaCoq Run (derive_global predicate).
+MetaCoq Run (derive_global branch).
+MetaCoq Run (derive_global def).
+MetaCoq Run (derive_global projection).
+
+MetaCoq Run (derive_global term).
+
+Print prettyM.
+
+MetaCoq Quote Definition big_def := 
+(forall {Ann : Type} {M : Type -> Type},
+       Monad.Monad M ->
+       MonadPPrint Ann M -> doc Ann -> bool -> nat -> nat -> nat -> M nat).
+  
+Time Eval compute in repr big_def.
+
 
 (* Testing *)
 
 (* TODO : 
-   1. handle records (it cannot be a fixpoint). 
-   2. handle abbreviations of inductives (+ better error messages). *)
+   1. handle abbreviations of inductives (+ better error messages).
+   2. why is this slow ? 
+      MetaCoq Run (derive_global mfixpoint).
+      >> "Not and inductive" 
+*)
 
 Definition x : ident := "x"%bs.
 Eval compute in repr x.
