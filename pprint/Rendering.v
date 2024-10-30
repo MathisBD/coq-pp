@@ -1,4 +1,4 @@
-From Coq Require Import List PrimInt63 PrimString.
+From Coq Require Import List Uint63 PrimString.
 From PPrint Require Import Monad Documents.
 Import ListNotations.
 Open Scope monad_scope.
@@ -36,16 +36,6 @@ Section Rendering.
 (** The rendering engine is parameterized by a pretty printing monad. *)
 Context {Ann : Type} {M : Type -> Type} {MonadM : Monad M} {MonadPPrintM : MonadPPrint Ann M}.
 
-(** [int_of_nat n] converts the natural [n] to a primitive integer. *)
-Definition int_of_nat (n : nat) : int :=
-  let fix loop i n :=
-    match n with 
-    | 0 => i
-    | S n => loop (add 1%int63 i) n 
-    end 
-  in 
-  loop 0%int63 n.
-
 (** [prettyM doc flat width indent col] is the main function in the rendering engine :
     - [doc] is the document we are printing.
     - [flat] is [true] if we are in flat mode, otherwise it is [false].
@@ -62,13 +52,13 @@ Fixpoint prettyM (doc : doc Ann) (flat : bool) (width indent col : nat) : M nat 
   match doc with
   | Empty => ret col
   | Str len s => add_string s ;; ret (col + len)
-  | Blank n => add_string (PrimString.make (int_of_nat n) " "%char63) ;; ret (col + n)
+  | Blank n => add_string (PrimString.make (of_nat n) " "%char63) ;; ret (col + n)
   | HardLine => 
     (* We should be in normal mode here. *)
     add_string (PrimString.make 1 10%int63) ;; 
-    add_string (PrimString.make (int_of_nat indent) " "%char63) ;;
+    add_string (PrimString.make (of_nat indent) " "%char63) ;;
     ret indent
-  | IfFlat doc1 doc2 =>
+  | IfFlat _ doc1 doc2 =>
       (* Print [doc1] or [doc2] depending on the current mode. *)
       prettyM (if flat then doc1 else doc2) flat width indent col
   | Cat _ doc1 doc2 =>

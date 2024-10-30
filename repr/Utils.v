@@ -1,6 +1,6 @@
 From MetaCoq.Utils Require Import monad_utils MCList MCString.
 From MetaCoq.Template Require Import All.
-From Coq Require Import Decimal List PrimInt63 PrimString.
+From Coq Require Import Decimal List Uint63 String Ascii PrimString.
 
 Import ListNotations MCMonadNotation.
 Open Scope string_scope.
@@ -44,6 +44,7 @@ Definition int_of_nat (n : nat) : int :=
   in 
   loop 0%int63 n.
 
+(** Convert a bytestring to a primitive string. *)
 Definition pstring_of_bytestring (bstr : bstring) : pstring :=
   let fix loop pstr bstr :=
     match bstr with 
@@ -54,6 +55,30 @@ Definition pstring_of_bytestring (bstr : bstring) : pstring :=
     end
   in
   loop ""%pstring bstr.
+
+(** Convert an stdlib string to a primitive string. *)
+Definition pstring_of_string (str : String.string) : PrimString.string :=
+  let fix loop pstr str :=
+    match str with 
+    | EmptyString => pstr
+    | String a str => 
+      let char := make 1 (of_nat (nat_of_ascii a)) in
+      loop (cat pstr char) str
+    end
+  in
+  loop ""%pstring str.
+
+(** Convert a primitive string to an stdlib string. *)
+Definition string_of_pstring (pstr : PrimString.string) : String.string :=
+  let fix loop i str :=
+    match i with 
+    | 0 => str
+    | S i => 
+      let char := ascii_of_nat (to_nat (PrimString.get pstr (of_nat i))) in
+      loop i (String char str)
+    end
+  in
+  loop (to_nat (PrimString.length pstr)) EmptyString.
 
 (** [monad_mapi f l] is the same as [monad_map f l] except the function [f]
     is fed the index of each argument. *)

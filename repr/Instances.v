@@ -6,7 +6,7 @@
     "cons 1 (cons 2 (cons 3 nil))".
 *)
 
-From Coq Require Import List PrimString.
+From Coq Require Import List PrimString String.
 From PPrint Require Import All.
 From Repr Require Import Class Utils Deriving.
 
@@ -14,22 +14,25 @@ Import ListNotations.
 Open Scope string_scope.
 Generalizable Variables A B C.
 
+(* This option is required to use the [derive] command.
+   TODO : figure out how to hide it. *)
+Unset MetaCoq Strict Unquote Universe Mode.
+
 (** Helper function which adds parentheses around an application if needed. *)
 Definition paren_app (min_prec : nat) (app_doc : doc unit) : doc unit :=
   if Nat.ltb 0 min_prec then paren app_doc else app_doc.
 
-(** Representation of booleans. *)
-(* DERIVE *)
+(** * Custom Instances. *)
 
-(** Representation of natural numbers. *)
 Instance repr_nat : Repr nat :=
 { repr_doc _ n := str $ pstring_of_nat n }.
 
-(** Representation of strings. *)
-Instance repr_string : Repr string :=
+Instance repr_pstring : Repr PrimString.string :=
 { repr_doc _ s := group $ bracket """" (str s) """" }.
 
-(** Representation of binary products. *)
+Instance repr_string : Repr String.string :=
+{ repr_doc _ s := group $ bracket """" (str $ pstring_of_string s) """" }.
+
 Instance repr_prod `{Repr A} `{Repr B} : Repr (A * B) :=
 { 
   repr_doc _ '(a, b) := 
@@ -37,7 +40,6 @@ Instance repr_prod `{Repr A} `{Repr B} : Repr (A * B) :=
     group $ paren contents
 }.
 
-(** Representation of lists. *)
 Instance repr_list `{Repr A} : Repr (list A) :=
 {
   repr_doc _ l := 
@@ -45,23 +47,24 @@ Instance repr_list `{Repr A} : Repr (list A) :=
     group $ bracket "[" contents "]"
 }.
 
-(** Representation of options. *)
-(* TODO : DERIVE *)
-Instance repr_option `{Repr A} : Repr (option A) :=
-{
-  repr_doc min_prec x :=
-    match x with 
-    | None => str "None"
-    | Some x => 
-      paren_if min_prec app_precedence $ 
-        str "Some" ^+^ repr_doc (S app_precedence) x
-    end
-}.
+(** * Derived Instances. *)
+
+MetaCoq Run (derive_global bool).
+MetaCoq Run (derive_global option).
+MetaCoq Run (derive_global sum).
+
+(*Time Eval compute in repr (inr ([3; 4; 3; 42], [inl (true)])).
 
 Inductive expr := 
   | ENat : nat -> expr 
   | EAdd : expr -> expr -> expr
   | EMul : expr -> expr -> expr.
+MetaCoq Run (derive_global expr).
+
+Definition n := ENat 0.
+Definition e x := EMul x (EMul x (EAdd x n)).
+Time Eval compute in e $ e $ e $ e $ e n.
+Time Eval compute in repr (e $ e $ e $ e $ e n).
 
 Instance repr_expr : Repr expr :=
 {
@@ -79,8 +82,7 @@ Instance repr_expr : Repr expr :=
     end
 }.
 
-Definition n := ENat 0.
-Eval compute in repr (EMul n (EMul n (EAdd n n))).
 
 Definition l n := List.init n id.
 Eval compute in repr (l 42, List.combine (l 10) (l 10), l 3, l 25).
+*)

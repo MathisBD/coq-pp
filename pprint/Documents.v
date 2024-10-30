@@ -1,4 +1,5 @@
-From Coq Require Import Bool List PrimInt63 PrimString.
+From Coq Require Import Bool List Uint63 PrimString.
+From Coq Require Strings.String.
 Import ListNotations.
 
 (** * Width requirements. *)
@@ -42,14 +43,15 @@ Inductive doc (A : Type) : Type :=
    
       We assume (but do not check) that strings do not contain a newline character. *)
   | Str : nat -> string -> doc A
-  (** [IfFlat d1 d2] turns into the document :
+  (** [IfFlat req d1 d2] turns into the document :
       - [d1] in flattening mode.
       - [d2] in normal mode. 
+      In particular [req] is equal to the requirement of [d1].
      
       We maintain the invariant that [d1] should not itself be of the form [IfFlat _ _].
       Users should use the function [ifflat] defined below to ensure this invariant is preserved.
   *)
-  | IfFlat : doc A -> doc A -> doc A
+  | IfFlat : requirement -> doc A -> doc A -> doc A
   (** When in flattening mode, [HardLine] causes a failure, which requires
       backtracking all the way until the stack is empty. When not in flattening
       mode, it represents a newline character, followed with an appropriate
@@ -90,12 +92,12 @@ Arguments Align    {A}%_type_scope.
 Arguments Annot    {A}%_type_scope.
 
 (** Retrieve or compute the space requirement of a doc. This is constant-time. *)
-Fixpoint doc_requirement {A} (d : doc A) : requirement :=
+Definition doc_requirement {A} (d : doc A) : requirement :=
   match d with 
   | Empty => Width 0
   | Blank len => Width len
   | Str len _ => Width len
-  | IfFlat doc1 _ => doc_requirement doc1
+  | IfFlat req _ _ => req
   | HardLine => Infinity
   | Cat req _ _ => req
   | Nest req _ _ => req
@@ -137,25 +139,24 @@ Definition utf8_length (str : string) : nat :=
     | 0 => (* This should not happen. *) acc 
     | S fuel =>
       (* Check if we are done. *)
-      if leb len i then acc else 
+      if (len <=? i)%uint63 then acc else 
       (* Compute the number of bytes that the current code point spans. *)
       let byte_count := 
         let byte := get str i in
-        if      ltb byte 128 then 1%int63
-        else if ltb byte 224 then 2%int63
-        else if ltb byte 240 then 3%int63
+        if      (byte <? 128)%uint63 then 1%int63
+        else if (byte <? 224)%uint63 then 2%int63
+        else if (byte <? 240)%uint63 then 3%int63
         else 4%int63
       in 
       (* Continue on the next code point. *)
       loop (S acc) (add i byte_count) fuel
     end
   in
-  (* TODO : use the actual length of the string for the fuel. *)
-  loop 0 0%int63 (Nat.pow 2 10).
+  loop 0%nat 0%int63 (Uint63.to_nat (length str)).
 
-(** [str s] is an atomic document that consists of the utf8-string [s]. 
+(** [str s] is an atomic document that consists of the utf8 primitive string [s]. 
     We assume (but do not check) that [s] does not contain a newline. *)
-Definition str s : doc A :=
+Definition str (s : PrimString.string) : doc A :=
   Str (utf8_length s) s.
 
 (** The atomic document [hardline] represents a forced newline. 
@@ -169,7 +170,7 @@ Definition hardline : doc A := HardLine.
 (** [softline] represents an optional newline :
     - in normal mode it is printed as a newline. 
     - in flat mode it disappears. *)
-Definition softline : doc A := IfFlat Empty HardLine.
+Definition softline : doc A := IfFlat (Width 0) Empty HardLine.
 
 (** The atomic document [blank n] consists of [n] blank characters. 
     A blank character is like an ordinary ASCII space character [char ' '], 
@@ -189,8 +190,8 @@ Definition space : doc A := Blank 1.
     - [doc2] in normal mode. *)
 Definition ifflat doc1 doc2 : doc A :=
   match doc1 with 
-  | IfFlat doc1 _ => IfFlat doc1 doc2
-  | _ => IfFlat doc1 doc2
+  | IfFlat req doc1 _ => IfFlat req doc1 doc2
+  | _ => IfFlat (doc_requirement doc1) doc1 doc2
   end.
 
 (** The document [break n] is a breakable blank of width [n]. It is printed as :

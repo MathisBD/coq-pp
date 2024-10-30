@@ -18,10 +18,13 @@ Solutions ?
 - extract bytestrings to a separate library ?
 - eventually deprecate ascii strings in Coq stdlib ?
 
-# MetaCoq : quoting primitive strings
+# MetaCoq bugs
 
-Bug : 
+1. Quoting primitive strings does not work : 
 ```
 MetaCoq Test Quote "hello"%pstring.
 (* (String.String "hello"%pstring) *) 
 ```
+
+2. noccurn_between is incorrect (the base case contains && instead of ||).
+

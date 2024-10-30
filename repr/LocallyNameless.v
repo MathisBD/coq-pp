@@ -208,7 +208,7 @@ Definition with_ctor_args {T} (ctx : NamedCtx.t) (ctor_body : constructor_body)
   let args := map_context_with_binders S (subst $ List.rev (ind :: params)) 0 ctor_body.(cstr_args) in
   with_context ctx args k.
 
-(** [with_ctor_indices ind ctor_body params k] gets the *value* of the indices of the constructor [ctor_body]
+(** [with_ctor_indices ind ctor_body params k] gets the _values_ of the indices of the constructor [ctor_body]
     (recall that the constructor indices can depend on the inductive [ind] and on the parameters [params]).
     - [k] takes the indices ordered from first to last.
     - [ind] is the inductive this constructor belongs to.

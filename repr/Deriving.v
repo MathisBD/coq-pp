@@ -17,13 +17,9 @@ Set Universe Polymorphism.
 Definition repr_arg {A} `{Repr A} (arg : A) : doc unit :=
   repr_doc (S app_precedence) arg.
 
-(** Pretty-print the application of constructor [label] to a list of arguments [args].
-    Due to a bug in MetaCoq it is impossible to quote primitive strings : [repr_ctor] thus
-    takes in a bytestring instead, and performs the conversion everytime it is called. 
-    This is obviously slightly inefficient.  *)
-Definition repr_ctor (min_prec : nat) (label : bstring) (args : list (doc unit)) : doc unit :=
+(** Pretty-print the application of constructor [label] to a list of arguments [args]. *)
+Definition repr_ctor (min_prec : nat) (label : pstring) (args : list (doc unit)) : doc unit :=
   (*let res := separate (break 1) (str label :: args) in*)
-  let label := pstring_of_bytestring label in
   let res := 
     match args with 
     | [] => str label
@@ -35,8 +31,8 @@ Definition repr_ctor (min_prec : nat) (label : bstring) (args : list (doc unit))
 (** SCRATCH *)
 
 
-Instance repr_nat : Repr nat.
-Admitted.
+Instance repr_nat : Repr nat :=
+{ repr_doc _ n := str $ pstring_of_nat n }.
 
 Instance repr_list {A} `{Repr A} : Repr (list A) :=
 {
@@ -49,11 +45,11 @@ Monomorphic Inductive vec A : nat -> Type :=
   | VNil : vec A 0
   | VCons : forall n, A -> vec A n -> vec A (S n).
 
-Fixpoint repr_vec (A : Type) n (_ : Repr A) (prec : nat) (xs : vec A n) {struct xs} : doc unit :=
-  let inst A' n' RA' := Build_Repr _ (repr_vec A' n' RA') in
+Fixpoint repr_vec_test (A : Type) n (_ : Repr A) (prec : nat) (xs : vec A n) {struct xs} : doc unit :=
+  let inst A' n' RA' := Build_Repr _ (repr_vec_test A' n' RA') in
   match xs with 
-  | VNil => repr_ctor prec "VNil"%bs []
-  | VCons n x xs => repr_ctor prec "VCons"%bs [repr_arg n; repr_arg x; repr_arg xs]
+  | VNil => repr_ctor prec "VNil" []
+  | VCons n x xs => repr_ctor prec "VCons" [repr_arg n; repr_arg x; repr_arg xs]
   end.
 
 Monomorphic Inductive tree A : nat -> A -> Type :=
@@ -62,7 +58,7 @@ Monomorphic Inductive tree A : nat -> A -> Type :=
 Arguments Leaf {A}.
 Arguments Node {A}.
   
-Definition repr_tree :=
+Definition repr_tree_test :=
   fix f 
     (A : Type) 
     (n : nat) (a : A) 
@@ -70,8 +66,8 @@ Definition repr_tree :=
     (prec : nat) (xs : tree A n a) {struct xs} : doc unit :=
     let _ := fun (A' : Type) (n' : nat) (a' : A') (RA' : Repr A') => Build_Repr _ (f A' n' a' RA') in 
     match xs with 
-    | Leaf a => repr_ctor prec "Leaf"%bs [repr_arg a]
-    | Node a n m x l r => repr_ctor prec "Node"%bs [repr_arg a ; repr_arg n; repr_arg m ; repr_arg x; repr_arg l; repr_arg r]
+    | Leaf a => repr_ctor prec "Leaf" [repr_arg a]
+    | Node a n m x l r => repr_ctor prec "Node" [repr_arg a ; repr_arg n; repr_arg m ; repr_arg x; repr_arg l; repr_arg r]
     end.
 
 (*Definition repr_tree' {A} {RA : Repr A} : Repr (tree A) := Build_Repr _ (repr_tree A RA).
@@ -201,39 +197,20 @@ Definition build_func ctx (ind : inductive) (ind_body : one_inductive_body) (cto
   mk_fix ctx fix_param (List.length params + List.length indices + List.length param_insts + 1) $
     mk_lambdas ctx (params ++ indices ++ param_insts ++ [prec; x]) $ 
       mk_lets ctx [rec_inst] body.
-        
+      
+Definition package_inst ctx (ind : inductive) (ind_body : one_inductive_body) (func : term) : term :=
+  with_ind_vars ctx ind_body $ fun ctx params indices param_insts =>
+    mk_lambdas ctx (params ++ indices ++ param_insts) $
+      let I := mkApps (tInd ind []) $ List.map tVar $ params ++ indices in
+      let contents := mkApps func $ List.map tVar $ params ++ indices ++ param_insts in
+      mkApps quoted_Build_Repr [I; contents].
+
+(** Small helper function to deal with universe issues. *)
 Definition unquote_func (func_ty : Type) (func : term) : TemplateMonad func_ty := 
   tmUnquoteTyped func_ty func.
 
-Definition build_instance (env : global_env) (ind : inductive) : TemplateMonad unit :=
-  (* Get the inductive body. *)
-  mlet (mind_body, ind_body) <- 
-    match lookup_inductive env ind with 
-    | None => tmFail "Failed looking up the inductive body"%bs
-    | Some bodies => ret bodies 
-    end 
-  ;;
-  (* Quote the constructor names. *)
-  mlet ctor_names <- 
-    monad_map 
-      (fun c => tmQuote =<< tmEval cbv c.(cstr_name)) 
-      ind_body.(ind_ctors)
-  ;;
-  (* Build the function type. *)
-  mlet func_ty <- tmUnquoteTyped Type (build_func_ty NamedCtx.empty ind ind_body []) ;;
-  tmPrint "FUNC_TY"%pstring ;;
-  tmPrint func_ty ;;
-  (* Build the function term. *)
-  let quoted_func := build_func NamedCtx.empty ind ind_body ctor_names [] in
-  mlet func <- unquote_func func_ty quoted_func ;;
-  tmPrint "FUNC"%pstring ;;
-  tmPrint func.
-  (* Quote again and add the definition. *)
-  (*mlet quoted_func' <- tmQuote func ;;
-  tmPrint quoted_func'.*)
-
 (** Derive command entry-point. *)
-Definition derive {A} (raw_ind : A) : TemplateMonad unit :=
+Definition derive {A} (instance_hints : hint_locality) (raw_ind : A) : TemplateMonad unit :=
   (* Get the inductive. *)
   mlet quoted_ind <- tmQuote raw_ind ;;
   mlet ind <- 
@@ -244,15 +221,44 @@ Definition derive {A} (raw_ind : A) : TemplateMonad unit :=
   ;; 
   (* Get the global environment needed to type the inductive. *)
   mlet env <- env_of_terms [quoted_ind; quoted_doc_unit; quoted_Repr] ;;
-  (* Build the Repr instance. *)
-  build_instance env ind.
-  (*tmPrint =<< tmEval cbv (print_term (env, Monomorphic_ctx) [] true func) ;;*)
-  (* Add the instance to the global environment and register it as an instance. *)
-  (*tmMkDefinition "repr_derive"%bs func_ty*)
+  (* Get the inductive body. *)
+  mlet (mind_body, ind_body) <- 
+    match lookup_inductive env ind with 
+    | None => tmFail "Failed looking up the inductive body"%bs
+    | Some bodies => ret bodies 
+    end 
+  ;;
+  (* Quote the constructor names. *)
+  let ctor_names :=
+    List.map 
+      (fun c => tString $ pstring_of_bytestring c.(cstr_name)) 
+      ind_body.(ind_ctors)
+  in
+  (* Build the function type. *)
+  mlet func_ty <- tmUnquoteTyped Type (build_func_ty NamedCtx.empty ind ind_body []) ;;
+  tmPrint "FUNC_TY"%pstring ;;
+  tmPrint func_ty ;;
+  (* Build the function term. Unquoting allows to solve evars. *)
+  mlet func <- unquote_func func_ty (build_func NamedCtx.empty ind ind_body ctor_names []) ;;
+  tmPrint "FUNC"%pstring ;;
+  tmPrint func ;;
+  (* Package the function to create an instance using [Build_Repr]. *)
+  mlet quoted_func <- tmQuote func ;;
+  let inst := package_inst NamedCtx.empty ind ind_body quoted_func in
+  (* Add the instance to the global environment. *)
+  let inst_name := ("repr_" ++ ind_body.(ind_name))%bs in
+  tmMkDefinition inst_name inst ;;
+  (* Declare it as an instance of [Repr]. *)
+  mlet inst_ref <- tmLocate1 inst_name ;;
+  tmExistingInstance instance_hints inst_ref.
   
+Definition derive_local {A} := @derive A local. 
+Definition derive_global {A} := @derive A global. 
+Definition derive_export {A} := @derive A export. 
+
 (** TESTING *)
 
-Instance repr_bool : Repr bool :=
+(*Instance repr_bool : Repr bool :=
 { repr_doc _ b := if b then str "true" else str "false" }.
 
 Monomorphic Inductive bool_option := 
@@ -270,9 +276,57 @@ Polymorphic Inductive poption (A : Type) :=
   | PNone : poption A
   | PSome : A -> poption A. 
 
-(* TODO : the evars are still not solved. *)
 Unset MetaCoq Strict Unquote Universe Mode.
-MetaCoq Run (derive tree).
+MetaCoq Run (derive export vec).
+
+Print repr_vec.
+
+Fixpoint v n : vec bool n :=
+  match n with 
+  | 0 => VNil bool 
+  | S n => VCons bool n false $ v n
+  end.
+
+Definition test := 
+  fix fix_param (n : nat) (min_prec : nat) (x : vec bool n) {struct x} : doc unit :=
+    match x with
+    | @VNil _ => repr_ctor min_prec "VNil" []
+    | @VCons _ n0 x0 x1 =>
+        repr_ctor min_prec "VCons"
+          [@repr_doc nat repr_nat min_prec n0; @repr_doc bool repr_bool min_prec x0;
+           @repr_doc (vec bool n0) {| repr_doc := fix_param n0 |} min_prec x1]
+    end.
+    
+Time Eval compute in repr (v 100).
+
+Print repr_nat.
+
+Definition test :=
+	(fix fix_param (n : nat) (x : vec bool n) {struct x} : doc unit :=
+       match x with
+       | @VNil _ => empty
+       | @VCons _ n x0 x1 =>
+           repr_ctor 0 ""%bs
+             [@repr_arg (vec bool n) {| repr_doc := fun _ => fix_param n |} x1]
+       end).
+
+Definition test2 := 
+  (fix fix_param
+       (A0 : Type) (H1 : nat) (H2 : Repr A0) (min_prec : nat) 
+       (x : vec A0 H1) {struct x} : doc unit :=
+       match x with
+       | @VNil _ => repr_ctor min_prec "VNil"%bs []
+       | @VCons _ n x0 x1 =>
+           repr_ctor min_prec "VCons"%bs
+             [repr_arg n; repr_arg x0; repr_arg x1]
+       end).
+
+Time Eval cbv in test2 bool 3 repr_bool 0 (v 3).
+
+Time Eval cbv in test 1000 (v 1000).
+
+Print derive_inst.
+Existing Instance derive_inst.
 
 
 (*Record color := { red : list nat * list nat ; green : list nat ; blue : list nat }. 
