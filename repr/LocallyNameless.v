@@ -81,7 +81,7 @@ Definition fresh_evar (ctx : NamedCtx.t) : term :=
   let args := List.map (fun '(id, _) => tVar id) (NamedCtx.decls ctx) in
   tEvar fresh_evar_id args.
 
-(** * Packaging inductives. *)
+(** * Manipulagin inductives. *)
 
 (** In MetaCoq the information related to an inductive type is spread accross
     three different datatypes : [inductive], [one_inductive_body] and [mutual_inductive_body].
@@ -104,6 +104,48 @@ Record packed_constructor :=
     packed inductive [pi]. *)
 Definition pi_ctors (pi : packed_inductive) : list packed_constructor :=
   mapi (fun i ctor => {| pc_pi := pi ; pc_idx := i ; pc_body := ctor |}) pi.(pi_body).(ind_ctors).
+
+(** This works around a bug in metacoq. Eventually we should remove it. *)
+Definition noccur_between := fix noccur_between (k n : nat) (t : term) {struct t} : bool :=
+  match t with
+  | tRel i => (i <? k) || (k + n <=? i)
+  | tEvar _ args => forallb (noccur_between k n) args
+  | tCast c _ t0 => noccur_between k n c && noccur_between k n t0
+  | tProd _ T M | tLambda _ T M =>
+	  noccur_between k n T && noccur_between (S k) n M
+  | tLetIn _ b t0 b' =>
+      noccur_between k n b && noccur_between k n t0 &&
+      noccur_between (S k) n b'
+  | tApp u v => noccur_between k n u && forallb (noccur_between k n) v
+  | tCase _ p c brs =>
+      let k' := #|pcontext p| + k in
+      let p' :=
+        test_predicate (fun _ : Instance.t => true) 
+          (noccur_between k n) (noccur_between k' n) p in
+      let brs' := test_branches_k (fun k0 : nat => noccur_between k0 n) k brs
+        in
+      p' && noccur_between k n c && brs'
+  | tProj _ c => noccur_between k n c
+  | tFix mfix _ | tCoFix mfix _ =>
+      let k' := #|mfix| + k in
+      forallb (test_def (noccur_between k n) (noccur_between k' n)) mfix
+  | tArray _ arr def ty =>
+      forallb (noccur_between k n) arr && noccur_between k n def &&
+      noccur_between k n ty
+  | _ => true
+  end.
+
+(** [is_pi_recursive pi] checks if the inductive [pi] is "recursive", in the sense
+    that it appears as an argument to one of its constructors. *)
+Definition is_pi_recursive (pi : packed_inductive) : bool := 
+  let nparams := pi.(pi_mbody).(ind_npars) in
+  (* The inductive is recursive if [tRel nparams] appears in the type of any argument. *)
+  let is_ctor_rec pc := 
+    List.existsb id $ mapi 
+      (fun i arg => negb $ noccur_between (nparams + i) 1 arg.(decl_type)) 
+      (List.rev pc.(pc_body).(cstr_args))
+  in
+  List.existsb is_ctor_rec $ pi_ctors pi.
 
 (** * Inspecting terms. *)
 

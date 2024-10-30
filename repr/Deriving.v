@@ -219,8 +219,6 @@ Definition lookup_packed_inductive {A} (raw_ind : A) : TemplateMonad packed_indu
   (* Pack everything. *)
   ret {| pi_ind := ind ; pi_body := ind_body ; pi_mbody := mind_body |}.
   
-Print mutual_inductive_body.
-
 (** Derive command entry-point. *)
 Definition derive {A} (hints : hint_locality) (raw_ind : A) : TemplateMonad unit :=
   (* Lookup the inductive. *)
@@ -238,15 +236,17 @@ Definition derive {A} (hints : hint_locality) (raw_ind : A) : TemplateMonad unit
     List.map (fun pc => tString $ pstring_of_bytestring pc.(pc_body).(cstr_name)) (pi_ctors pi)
   in
   (* Build the raw function, choosing the right version. *)
-  mlet quoted_func <-
+  mlet build_func <-
     match pi.(pi_mbody).(ind_finite) with 
-    | BiFinite => ret $ build_func_normal NamedCtx.empty pi ctor_names 
+    | BiFinite => ret build_func_normal 
     | Finite => 
-      (* TODO : check if a fixpoint is actually needed. *)
-      ret $ build_func_fix NamedCtx.empty pi ctor_names
+      (* For inductives, we only need a fixpoint if the inductive is recursive. *)
+      tmPrint =<< tmEval cbv (is_pi_recursive pi) ;;
+      ret $ if is_pi_recursive pi then build_func_fix else build_func_normal
     | CoFinite => tmFail "CoInductives are not supported."%bs 
     end
   ;;
+  let quoted_func := build_func NamedCtx.empty pi ctor_names in
   (* Solve evars using unquoting. *)
   mlet func_ty <- tmUnquoteTyped Type (build_func_ty NamedCtx.empty pi) ;;
   mlet func <- unquote_func func_ty quoted_func ;;
@@ -286,104 +286,6 @@ Polymorphic Inductive poption (A : Type) :=
 Record color := { red : bool ; blue : bool ; green : bool }.
 
 Unset MetaCoq Strict Unquote Universe Mode.
-MetaCoq Run (derive_export color).
-
-Print repr_color.
-Print repr_option.
-
-Print repr_myind.
-Eval compute in Print repr_vec.
-repr [true; false; true; false; true].
-
-Fixpoint v n : vec bool n :=
-  match n with 
-  | 0 => VNil bool 
-  | S n => VCons bool n false $ v n
-  end.
-
-Definition test := 
-  fix fix_param (n : nat) (min_prec : nat) (x : vec bool n) {struct x} : doc unit :=
-    match x with
-    | @VNil _ => repr_ctor min_prec "VNil" []
-    | @VCons _ n0 x0 x1 =>
-        repr_ctor min_prec "VCons"
-          [@repr_doc nat repr_nat min_prec n0; @repr_doc bool repr_bool min_prec x0;
-           @repr_doc (vec bool n0) {| repr_doc := fix_param n0 |} min_prec x1]
-    end.
-    
-Time Eval compute in repr (v 100).
-
-Print repr_nat.
-
-Definition test :=
-	(fix fix_param (n : nat) (x : vec bool n) {struct x} : doc unit :=
-       match x with
-       | @VNil _ => empty
-       | @VCons _ n x0 x1 =>
-           repr_ctor 0 ""%bs
-             [@repr_arg (vec bool n) {| repr_doc := fun _ => fix_param n |} x1]
-       end).
-
-Definition test2 := 
-  (fix fix_param
-       (A0 : Type) (H1 : nat) (H2 : Repr A0) (min_prec : nat) 
-       (x : vec A0 H1) {struct x} : doc unit :=
-       match x with
-       | @VNil _ => repr_ctor min_prec "VNil"%bs []
-       | @VCons _ n x0 x1 =>
-           repr_ctor min_prec "VCons"%bs
-             [repr_arg n; repr_arg x0; repr_arg x1]
-       end).
-
-Time Eval cbv in test2 bool 3 repr_bool 0 (v 3).
-
-Time Eval cbv in test 1000 (v 1000).
-
-Print derive_inst.
-Existing Instance derive_inst.
-
-
-(*Record color := { red : list nat * list nat ; green : list nat ; blue : list nat }. 
-
-Instance reprColor : Repr color := 
-{
-  repr_doc c :=
-    let fields := 
-      [ ("red"  , repr_doc c.(red))
-      ; ("green", repr_doc c.(green))
-      ; ("blue" , repr_doc c.(blue))]
-    in
-    (* Pretty-print each field. *)
-    let fields :=
-      List.map (fun '(name, doc) => group (prefix 1 2 (str name ^^ str " :=") doc)) fields
-    in
-    (* Concatenate the fields (with semicolons). *)
-    let contents := separate (str " ;" ^^ break 1) fields (*^^ ifflat empty (str " ;")*) in
-    (* Add the leading and trailing brackets. *)
-    let res := infix 1 2 (str "{|") contents (str "|}") in
-    group (align res)
-}.
-
-
-Definition c_small := {| red := (range 2, range 0) ; green := range 3 ; blue := range 2 |}.
-Definition c_large := {| red := (range 42, range 42) ; green := range 6 ; blue := range 2 |}.
-
-Eval compute in repr c_small.
-Eval compute in repr c_large.
-
-Check 
-{|
-  red :=
-    ([42; 41; 40; 39; 38; 37; 36; 35; 34; 33; 32; 31; 30; 29; 28; 27; 26; 25; 24;
-      23; 22; 21; 20; 19; 18; 17; 16; 15; 14; 13; 12; 11; 10; 9; 8; 7; 6; 5; 4;
-      3; 2; 1],
-     [42; 41; 40; 39; 38; 37; 36; 35; 34; 33; 32; 31; 30; 29; 28; 27; 26; 25; 24;
-      23; 22; 21; 20; 19; 18; 17; 16; 15; 14; 13; 12; 11; 10; 9; 8; 7; 6; 5; 4;
-      3; 2; 1]) ;
-  green := [6; 5; 4; 3; 2; 1] ;
-  blue := [2; 1] ;
-|}.
-
-Eval compute in repr (range 42, List.map string_of_nat (range 26)).
-
-Eval compute in String "034" "Hello".*)*)
+MetaCoq Run (derive_export option).
+MetaCoq Run (derive_export list).
+MetaCoq Run (derive_export color).*)

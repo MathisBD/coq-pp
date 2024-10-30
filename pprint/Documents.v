@@ -1,5 +1,4 @@
 From Coq Require Import Bool List Uint63 PrimString.
-From Coq Require Strings.String.
 Import ListNotations.
 
 (** * Width requirements. *)
