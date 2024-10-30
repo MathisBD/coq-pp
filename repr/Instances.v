@@ -25,25 +25,25 @@ Definition paren_app (min_prec : nat) (app_doc : doc unit) : doc unit :=
 (** * Custom Instances. *)
 
 Instance repr_nat : Repr nat :=
-{ repr_doc _ n := str $ pstring_of_nat n }.
+{ repr_prec _ n := str $ pstring_of_nat n }.
 
 Instance repr_primstring : Repr PrimString.string :=
-{ repr_doc _ s := group $ bracket """" (str s) """" }.
+{ repr_prec _ s := group $ bracket """" (str s) """" }.
 
 Instance repr_string : Repr String.string :=
-{ repr_doc _ s := group $ bracket """" (str $ pstring_of_string s) """" }.
+{ repr_prec _ s := group $ bracket """" (str $ pstring_of_string s) """" }.
 
 Instance repr_prod `{Repr A} `{Repr B} : Repr (A * B) :=
 { 
-  repr_doc _ '(a, b) := 
-    let contents := repr_doc 0 a ^^ str "," ^/^ repr_doc 0 b in
+  repr_prec _ '(a, b) := 
+    let contents := repr_prec 0 a ^^ str "," ^/^ repr_prec 0 b in
     group $ paren contents
 }.
 
 Instance repr_list `{Repr A} : Repr (list A) :=
 {
-  repr_doc _ l := 
-    let contents := flow_map (str ";" ^^ break 1) (repr_doc 0) l in
+  repr_prec _ l := 
+    let contents := flow_map (str ";" ^^ break 1) (repr_prec 0) l in
     group $ bracket "[" contents "]"
 }.
 
@@ -68,9 +68,9 @@ Time Eval compute in repr (e $ e $ e $ e $ e n).
 
 Instance repr_expr : Repr expr :=
 {
-  repr_doc := fix f min_prec e :=
+  repr_prec := fix f min_prec e :=
     match e with 
-    | ENat n => repr_doc 0 n 
+    | ENat n => repr_prec 0 n 
     | EAdd e1 e2 => 
       let prec := 10 in
       let contents := f prec e1 ^+^ str "+" ^+^ f (S prec) e2 in

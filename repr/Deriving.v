@@ -14,7 +14,7 @@ Set Universe Polymorphism.
 
 (** Pretty-print the constructor argument [arg]. *)
 Definition repr_arg {A} `{Repr A} (arg : A) : doc unit :=
-  repr_doc (S app_precedence) arg.
+  repr_prec (S app_precedence) arg.
 
 (** Pretty-print the application of constructor [label] to a list of arguments [args]. *)
 Definition repr_ctor (min_prec : nat) (label : pstring) (args : list (doc unit)) : doc unit :=
@@ -44,7 +44,7 @@ MetaCoq Quote Definition quoted_Build_Repr := (Build_Repr).
     [
       Instance repr_list A (Repr A) : Repr (list A) :=
       { 
-        repr_doc := 
+        repr_prec := 
           fix f prec x : doc unit := ... 
       }
     ] 
@@ -57,7 +57,7 @@ MetaCoq Quote Definition quoted_Build_Repr := (Build_Repr).
     and then package it in an instance :
     [
       Instance repr_list A (RA : Repr A) : Repr (list A) :=
-      { repr_doc := raw_func A RA }
+      { repr_prec := raw_func A RA }
     ] 
 *)
 
@@ -264,28 +264,3 @@ Definition derive_local {A} := @derive A local.
 Definition derive_global {A} := @derive A global. 
 Definition derive_export {A} := @derive A export. 
 
-(** TESTING *)
-
-(*Instance repr_bool : Repr bool :=
-{ repr_doc _ b := if b then str "true" else str "false" }.
-
-Monomorphic Inductive bool_option := 
-  | B1 : bool_option
-  | B2 : bool -> bool_option.
-Monomorphic Inductive mylist (A : Type) :=
-  | MyNil : mylist A
-  | MyCons : A -> mylist A -> mylist A.
-Monomorphic Inductive myind (A B : Type) : Type := 
-  | MyConstr : bool -> A -> myind A bool -> myind A B.
-Monomorphic Inductive empty_vec : nat -> Type :=
-  | EVNil : empty_vec 0
-  | EVCons : forall n, empty_vec n -> empty_vec (S n).
-Polymorphic Inductive poption (A : Type) :=
-  | PNone : poption A
-  | PSome : A -> poption A. 
-Record color := { red : bool ; blue : bool ; green : bool }.
-
-Unset MetaCoq Strict Unquote Universe Mode.
-MetaCoq Run (derive_export option).
-MetaCoq Run (derive_export list).
-MetaCoq Run (derive_export color).*)
