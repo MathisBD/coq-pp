@@ -6,6 +6,7 @@ From MetaCoq.Template Require Import All.
 From MetaCoq.Utils Require Import monad_utils.
 From PPrint Require Import All.
 From Repr Require Import Class Utils LocallyNameless Class.
+From ReductionEffect Require Import PrintingEffect.
 
 Import ListNotations MCMonadNotation.
 Open Scope list_scope.
@@ -26,33 +27,6 @@ Definition repr_ctor (min_prec : nat) (label : pstring) (args : list (doc unit))
     end
   in
   group $ hang 2 res.
-
-(*******************************************************)
-
-(*Inductive mlist (A : Type) : Type :=
-  | MNil : mlist A
-  | MCons : A -> moption A -> mlist A
-with moption (A : Type) : Type :=
-  | MSome : mlist A -> moption A.
-
-Fixpoint repr_mlist (A : Type) (RA : Repr A) (prec : nat) (x : mlist A) : doc unit :=
-  let _ := fun A' RA' => Build_Repr _ (repr_mlist A' RA') in
-  let _ := fun A' RA' => Build_Repr _ (repr_moption A' RA') in
-  match x with 
-  | MNil => repr_ctor prec "MNil" []
-  | MCons a1 a2 => repr_ctor prec "MCons" [repr_arg a1; repr_arg a2]
-  end
-with repr_moption (A : Type) (RA : Repr A) (prec : nat) (x : moption A) : doc unit :=
-  let _ := fun A' RA' => Build_Repr _ (repr_mlist A' RA') in
-  let _ := fun A' RA' => Build_Repr _ (repr_moption A' RA') in
-  match x with 
-  | MSome a => repr_ctor prec "MSome" [repr_arg a]
-  end.
-  
-Definition kname := (MPfile ["Deriving"%bs], "repr_mlist"%bs).
-MetaCoq Run (tmPrint =<< tmEval (unfold kname) repr_mlist).*)
-
-(*******************************************************)
 
 (** Quote some terms that we will need below. *)
 MetaCoq Quote Definition quoted_repr_arg := (@repr_arg).
@@ -146,18 +120,20 @@ Definition build_arg ctx (arg : ident) : term :=
   mkApps quoted_repr_arg [NamedCtx.get_type ctx arg; fresh_evar ctx; tVar arg].
 
 (** Build a branch for a single constructor. *)
-Definition build_branch ctx (inp : inputs) (pc : packed_constructor) (quoted_ctor_name : term) : branch term :=
+Definition build_branch ctx (inp : inputs) (pc : packed_constructor) : branch term :=
   (* Get the list of arguments of the constructor. *)
   with_ctor_args ctx pc (List.map tVar inp.(params)) $ fun ctx args =>
   (* Apply [repr_ctor] to the precedence, label and the arguments. *)
+  let quoted_ctor_name := tString $ pstring_of_bytestring pc.(pc_body).(cstr_name) in
   let repr_args := term_list quoted_doc_unit $ List.map (build_arg ctx) args in
   mk_branch ctx args $ mkApps quoted_repr_ctor [tVar inp.(prec); quoted_ctor_name; repr_args].
 
 (** Bind the recursive [Repr] instance using a let-in. *)
-Definition with_rec_inst {T} ctx (pi : packed_inductive) (fix_param : term) (k : NamedCtx.t -> ident -> T) : T :=
+Definition with_rec_inst {T} ctx (pi : packed_inductive) (fix_param : ident) (k : NamedCtx.t -> ident -> T) : T :=
+  (*let _ := print_id (fix_param, pi) in*)
   let body := 
     with_func_inputs ctx pi $ fun ctx inp =>
-    let body := mkApps fix_param $ List.map tVar $ inp.(params) ++ inp.(indices) ++ inp.(insts) in
+    let body := mkApps (tVar fix_param) $ List.map tVar $ inp.(params) ++ inp.(indices) ++ inp.(insts) in
     mk_lambdas ctx (inp.(params) ++ inp.(indices) ++ inp.(insts)) $ 
       mkApps quoted_Build_Repr [apply_ind pi inp ; body]
   in 
@@ -168,8 +144,19 @@ Definition with_rec_inst {T} ctx (pi : packed_inductive) (fix_param : term) (k :
   in
   with_decl ctx decl k.
 
+(** Extend [with_rec_inst] to several pairs of inductive/fix_param. *)
+Fixpoint with_rec_insts {T} ctx (pis : list packed_inductive) (fix_params : list ident) 
+  (k : NamedCtx.t -> list ident -> T) : T :=
+  match pis, fix_params with 
+  | pi :: pis, fix_param :: fix_params =>
+    with_rec_inst ctx pi fix_param $ fun ctx rec_inst =>
+    with_rec_insts ctx pis fix_params $ fun ctx rec_insts =>
+      k ctx (rec_inst :: rec_insts)
+  | _, _ => k ctx []
+  end.
+
 (** Build the case expression. *)
-Definition build_match ctx (pi : packed_inductive) (inp : inputs) (ctor_names : list term) : term :=
+Definition build_match ctx (pi : packed_inductive) (inp : inputs) : term :=
   (* Case info. *)  
   let ci := {| ci_ind := pi.(pi_ind) ; ci_npar := pi.(pi_mbody).(ind_npars) ; ci_relevance := Relevant |} in
   (* Case predicate. *)
@@ -180,36 +167,62 @@ Definition build_match ctx (pi : packed_inductive) (inp : inputs) (ctor_names : 
       mk_pred ctx params indices x quoted_doc_unit
   in
   (* Case branches. *)
-  let branches := map2 (build_branch ctx inp) (pi_ctors pi) ctor_names in
+  let branches := List.map (build_branch ctx inp) (pi_ctors pi) in
   (* Result. *)
   tCase ci pred (tVar inp.(x)) branches.
 
 (** Build the raw function's type. *)
 Definition build_func_ty ctx (pi : packed_inductive) : term :=
   with_func_inputs ctx pi $ fun ctx inp =>
-    mk_prods ctx (input_vars inp) quoted_doc_unit.
+  mk_prods ctx (input_vars inp) quoted_doc_unit.
 
 (** Build the raw function (normal variant). *)
-Definition build_func_normal ctx (pi : packed_inductive) (ctor_names : list term) : term :=
+Definition build_func_normal ctx (pi : packed_inductive) : term :=
   with_func_inputs ctx pi $ fun ctx inp =>
-  let body := build_match ctx pi inp ctor_names in
+  let body := build_match ctx pi inp in
   mk_lambdas ctx (input_vars inp) body.
 
 (** Build the raw function (fixpoint variant). *)
-Definition build_func_fix ctx (pi : packed_inductive) (ctor_names : list term) : term :=
+Definition build_func_fix ctx (pi : packed_inductive) : term :=
   (* Declare the fixpoint parameter. *)
   with_decl ctx (mk_decl "fix_param"%bs $ build_func_ty ctx pi) $ fun ctx fix_param =>
   (* Declare the function inputs. *)
   with_func_inputs ctx pi $ fun ctx inp =>
   (* Add a let-binding for the recursive [Repr] instance. *)
-  with_rec_inst ctx pi (tVar fix_param) $ fun ctx rec_inst =>
+  with_rec_inst ctx pi fix_param $ fun ctx rec_inst =>
   (* Build the match. *)
-  let body := build_match ctx pi inp ctor_names in
+  let body := build_match ctx pi inp in
   (* Abstract over all the variables. *)
   mk_fix ctx fix_param (pred $ List.length (input_vars inp)) $
     mk_lambdas ctx (input_vars inp) $ 
       mk_lets ctx [rec_inst] body.
 
+(** Build the raw function (mutual fixpoint variant). *)
+Definition build_func_mfix ctx (pis : list packed_inductive) : mfixpoint term :=
+  (* Declare the fixpoint parameters. *)
+  let fix_decls := List.map (fun pi => mk_decl ("fix_" ++ pi.(pi_body).(ind_name))%bs $ build_func_ty ctx pi) pis in
+  with_decls ctx fix_decls $ fun ctx fix_params =>
+  (*let _ := map2 (fun fp pi => print_id (fp, NamedCtx.get_type ctx fp, pi)) fix_params pis in*)
+  (* Construct each function. *)
+  let one_func pi :=
+    (* Declare the function inputs. *)
+    with_func_inputs ctx pi $ fun ctx inp =>
+    (* Add let-bindings for the recursive [Repr] instances. *)
+    with_rec_insts ctx pis fix_params $ fun ctx rec_insts =>
+    (* Build the match. *)
+    let body := build_match ctx pi inp in
+    (* Abstract over the rec instances and the inputs. *)
+    mk_lambdas ctx (input_vars inp) $ mk_lets ctx rec_insts body
+  in
+  (*List.map (fun pi => mk_lambdas ctx fix_params $ one_func pi) pis.*)
+  (* Wrap everything up in a mutual fixpoint. *)
+  let rec_args := 
+    List.map 
+      (fun pi => 1 + 2 * pi.(pi_mbody).(ind_npars) + List.length pi.(pi_body).(ind_indices)) 
+      pis 
+  in
+  mk_mfix ctx fix_params rec_args $ List.map one_func pis.
+  
 (** [build_inst ctx pi func] builds the [Repr] instance corresponding 
     to the raw function [func]. *)
 Definition build_inst ctx (pi : packed_inductive) (func : term) : term :=
@@ -255,11 +268,6 @@ Definition derive {A} (hints : hint_locality) (raw_ind : A) : TemplateMonad unit
     | _ => ret tt
     end
   ;;
-  (* Quote the constructor names. For efficiency reasons we do this 
-     at the toplevel, in order to keep as much code outside of TemplateMonad. *)
-  let ctor_names :=
-    List.map (fun pc => tString $ pstring_of_bytestring pc.(pc_body).(cstr_name)) (pi_ctors pi)
-  in
   (* Build the raw function, choosing the right version. *)
   mlet build_func <-
     match pi.(pi_mbody).(ind_finite) with 
@@ -270,7 +278,7 @@ Definition derive {A} (hints : hint_locality) (raw_ind : A) : TemplateMonad unit
     | CoFinite => tmFail "CoInductives are not supported."%bs 
     end
   ;;
-  let quoted_func := build_func NamedCtx.empty pi ctor_names in
+  let quoted_func := build_func NamedCtx.empty pi in
   (* Solve evars using unquoting. *)
   mlet func_ty <- tmUnquoteTyped Type (build_func_ty NamedCtx.empty pi) ;;
   mlet func <- unquote_func func_ty quoted_func ;;
@@ -287,4 +295,51 @@ Definition derive {A} (hints : hint_locality) (raw_ind : A) : TemplateMonad unit
 Definition derive_local {A} := @derive A local. 
 Definition derive_global {A} := @derive A global. 
 Definition derive_export {A} := @derive A export. 
-      
+     
+Definition test {A} (raw_ind : A) : TemplateMonad unit :=
+  (* Lookup. *)
+  mlet pi <- lookup_packed_inductive raw_ind ;;
+  (* Build fixpoint. *)
+  let mfix := build_func_mfix NamedCtx.empty $ pi_block pi in
+  tmEval cbv mfix ;;
+  (* Extract first function. *)
+  mlet func_ty <- tmUnquoteTyped Type (build_func_ty NamedCtx.empty pi) ;;
+  mlet func <- unquote_func func_ty (tFix mfix 0) ;;
+  tmPrint func.
+   
+Monomorphic Inductive mlist (A : Type) : Type :=
+  | MNil : mlist A
+  | MCons : A -> moption A -> mlist A
+with moption (A : Type) : Type :=
+  | MSome : mlist A -> moption A.
+
+Fixpoint repr_mlist (A : Type) (RA : Repr A) (prec : nat) (x : mlist A) : doc unit :=
+  let _ := fun A' RA' => Build_Repr _ (repr_mlist A' RA') in
+  let _ := fun A' RA' => Build_Repr _ (repr_moption A' RA') in
+  match x with 
+  | MNil => repr_ctor prec "MNil" []
+  | MCons a1 a2 => repr_ctor prec "MCons" [repr_arg a1; repr_arg a2]
+  end
+with repr_moption (A : Type) (RA : Repr A) (prec : nat) (x : moption A) : doc unit :=
+  let _ := fun A' RA' => Build_Repr _ (repr_mlist A' RA') in
+  let _ := fun A' RA' => Build_Repr _ (repr_moption A' RA') in
+  match x with 
+  | MSome a => repr_ctor prec "MSome" [repr_arg a]
+  end.
+
+Fixpoint even n : bool :=
+  match n with 
+  | 0 => true
+  | S n => odd n
+  end
+with odd n : bool :=
+  match n with 
+  | 0 => false 
+  | S n => even n
+  end.
+
+(*Definition kname := (MPfile ["Deriving"%bs], "even"%bs).
+MetaCoq Run (tmPrint =<< tmQuote =<< tmEval (unfold kname) even).*)
+
+Unset MetaCoq Strict Unquote Universe Mode.
+MetaCoq Run (test mlist).

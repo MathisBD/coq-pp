@@ -130,6 +130,13 @@ Fixpoint find_index {A} (pred : A -> bool) (xs : list A) : option nat :=
     if pred x then Some 0 else option_map S $ find_index pred xs
   end.
 
+(** Same as [map2] but for 3 arguments. *)
+Fixpoint map3 {A B C T} (f : A -> B -> C -> T) (xs : list A) (ys : list B) (zs : list C) : list T :=
+  match xs, ys, zs with 
+  | x :: xs, y :: ys, z :: zs => f x y z :: map3 f xs ys zs
+  | _, _, _ => []
+  end.
+
 End List.
 
 (** [ind_param_count ind_body] computes the number of parameters in the inductive [ind_body].

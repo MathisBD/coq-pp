@@ -1,3 +1,8 @@
+# TODO
+
+- Profile and optimize the pretty-printing computation.
+- Improve naming of the derived Repr instance (repr_t is always there).
+
 # Workshop Paper ?
 
 # Solving Evars

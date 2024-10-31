@@ -81,7 +81,7 @@ Definition fresh_evar (ctx : NamedCtx.t) : term :=
   let args := List.map (fun '(id, _) => tVar id) (NamedCtx.decls ctx) in
   tEvar fresh_evar_id args.
 
-(** * Manipulagin inductives. *)
+(** * Manipulating inductives. *)
 
 (** In MetaCoq the information related to an inductive type is spread accross
     three different datatypes : [inductive], [one_inductive_body] and [mutual_inductive_body].
@@ -147,6 +147,16 @@ Definition is_pi_recursive (pi : packed_inductive) : bool :=
   in
   List.existsb is_ctor_rec $ pi_ctors pi.
 
+(** [pi_block pi] returns the list of packed inductives in the same block
+    as [pi], including [pi] itself, ordered from first to last. *)
+Definition pi_block (pi : packed_inductive) : list packed_inductive :=
+  mapi
+    (fun i body =>
+      {| pi_ind := {| inductive_mind := pi.(pi_ind).(inductive_mind) ; inductive_ind := i |}
+      ;  pi_body := body
+      ;  pi_mbody := pi.(pi_mbody) |})
+    pi.(pi_mbody).(ind_bodies).
+
 (** * Inspecting terms. *)
 
 (** [with_decl ctx decl k] generates a fresh identifier built from [decl.(decl_name)], 
@@ -165,7 +175,7 @@ Definition with_decl {T} (ctx : NamedCtx.t) (decl : context_decl) (k : NamedCtx.
   (* Pass the identifier and extended context to the continuation. *)
   k (NamedCtx.push ctx id decl) id.
 
-(** [with_decls ctx [d_0; ... ; d_n] k] calls [with_decl] on [d_0] to [d_n] (in order).
+(** [with_decls ctx [d_0; ... ; d_n] k] calls [with_decl] on [d_0] to [d_n] (in this order).
     The declarations [d_i] must contain no loose de Bruijn index.
     A related but different variant is [with_context]. *)
 Fixpoint with_decls {T} (ctx : NamedCtx.t) (ds : list context_decl) (k : NamedCtx.t -> list ident -> T) : T :=
@@ -270,8 +280,11 @@ Definition with_ind_indices {T} (ctx : NamedCtx.t) (pi : packed_inductive)
     - [params] contains the parameters of the inductive, ordered from first to last. *)
 Definition with_ctor_args {T} (ctx : NamedCtx.t) (pc : packed_constructor)
   (params : list term) (k : NamedCtx.t -> list ident -> T) : T :=
-  (* Recall that the constructor arguments can depend on the inductive and on its parameters. *)
-  let vars := List.rev (tInd pc.(pc_pi).(pi_ind) [] :: params) in
+  (* Recall that the constructor arguments can depend on :
+     - the inductives in the mutual block
+     - the parameters of the inductives. *)
+  let inds := List.map (fun pi => tInd pi.(pi_ind) []) $ pi_block pc.(pc_pi) in
+  let vars := List.rev (inds ++ params) in
   let args := map_context_with_binders S (subst vars) 0 pc.(pc_body).(cstr_args) in
   with_context ctx args k.
 
@@ -281,7 +294,8 @@ Definition with_ctor_args {T} (ctx : NamedCtx.t) (pc : packed_constructor)
     - [params] contains the parameters of the inductive, ordered from first to last. *)
 Definition with_ctor_indices {T} (pc : packed_constructor) (params : list term) (k : list term -> T) : T :=
   (* Recall that the construtor indices can depend on the inductive and on its parameters. *)
-  let vars := List.rev (tInd pc.(pc_pi).(pi_ind) [] :: params) in
+  let inds := List.map (fun pi => tInd pi.(pi_ind) []) $ pi_block pc.(pc_pi) in
+  let vars := List.rev (inds ++ params) in
   let indices := List.map (subst vars 0) pc.(pc_body).(cstr_indices) in
   k indices.
 
@@ -366,3 +380,16 @@ Definition mk_fix (ctx : NamedCtx.t) (id : ident) (rec_arg_idx : nat) (body : te
     ;  rarg := rec_arg_idx |}
   in 
   tFix [def] 0.
+
+(** [mk_mfix ctx ids rargs bodies] creates a mutual fixpoint block. 
+  - [ids] are the identifiers of the fixpoint parameters, ordered from first to last. 
+  - [rargs] are the indices of the recursive argument of the each fixpoint (starting at 0). 
+  - [bodies] are the body of the fixpoints, which can contain [ids]. *)
+Definition mk_mfix (ctx : NamedCtx.t) (ids : list ident) (rargs : list nat) (bodies : list term) : mfixpoint term :=
+  let one_def id rarg body := 
+    {| dname := NamedCtx.get_name ctx id 
+    ;  dtype := NamedCtx.get_type ctx id 
+    ;  dbody := abstract0 (List.rev ids) body 
+    ;  rarg := rarg |}
+  in 
+  List.map3 one_def ids rargs bodies.
