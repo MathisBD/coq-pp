@@ -1,7 +1,7 @@
 (** This file implements a Coq command that automatically derives [Repr] instances
     for inductives and records. *)
 
-From Coq Require Import PrimString List.
+From Coq Require Import PrimString List Bool.
 From MetaCoq.Template Require Import All.
 From MetaCoq.Utils Require Import monad_utils.
 From PPrint Require Import All.
@@ -257,89 +257,48 @@ Definition lookup_packed_inductive {A} (raw_ind : A) : TemplateMonad packed_indu
   | Some body => ret {| pi_ind := ind ; pi_body := body ; pi_mbody := mbody |}
   end.
 
-(** Derive command entry-point. *)
-Definition derive {A} (hints : hint_locality) (raw_ind : A) : TemplateMonad unit :=
-  (* Lookup the inductive. *)
-  mlet pi <- lookup_packed_inductive raw_ind ;;
-  (* Check it is not a mutual inductive. *)
-  mlet _ <- 
-    match pi.(pi_mbody).(ind_bodies) with
-    | _ :: _ :: _=> tmFail "Mutual inductives are not supported."%bs
-    | _ => ret tt
-    end
-  ;;
-  (* Build the raw function, choosing the right version. *)
-  mlet build_func <-
-    match pi.(pi_mbody).(ind_finite) with 
-    | BiFinite => ret build_func_normal 
-    | Finite => 
-      (* For inductives, we only need a fixpoint if the inductive is recursive. *)
-      ret $ if is_pi_recursive pi then build_func_fix else build_func_normal
-    | CoFinite => tmFail "CoInductives are not supported."%bs 
-    end
-  ;;
-  let quoted_func := build_func NamedCtx.empty pi in
+Definition declare_instance (hints : hint_locality) (pi : packed_inductive) (raw_func : term) : TemplateMonad unit :=
   (* Solve evars using unquoting. *)
   mlet func_ty <- tmUnquoteTyped Type (build_func_ty NamedCtx.empty pi) ;;
-  mlet func <- unquote_func func_ty quoted_func ;;
+  mlet func <- unquote_func func_ty raw_func ;;
   (* Package the raw function using [Build_Repr]. *)
   mlet quoted_func <- tmQuote func ;;
   let inst := build_inst NamedCtx.empty pi quoted_func in
   (* Add the instance to the global environment. *)
   let inst_name := ("repr_" ++ pi.(pi_body).(ind_name))%bs in
-  tmMkDefinition inst_name inst ;;
+  mlet _ <- tmMkDefinition inst_name inst ;;
   (* Declare it as an instance of [Repr]. *)
   mlet inst_ref <- tmLocate1 inst_name ;;
   tmExistingInstance hints inst_ref.
 
+(** Derive command entry-point. *)
+Definition derive {A} (hints : hint_locality) (raw_ind : A) : TemplateMonad unit :=
+  (* Lookup the inductive. *)
+  mlet pi <- lookup_packed_inductive raw_ind ;;
+  let n_inds := List.length pi.(pi_mbody).(ind_bodies) in
+  (* Build the raw function(s), choosing the right version. *)
+  mlet quoted_funcs <-
+    match pi.(pi_mbody).(ind_finite) with 
+    | BiFinite => 
+      (* Record : no need to build a fixpoint. *)
+      ret [build_func_normal NamedCtx.empty pi] 
+    | Finite => 
+      if Nat.ltb 1 n_inds || is_pi_recursive pi then 
+        (* Mutual inductive : build a mutual fixpoint, from which we extract a raw function
+           for each inductive in the block. *)
+        (* Non-mutual inductive, but still recursive : build a fixpoint. *)
+        let mfix := build_func_mfix NamedCtx.empty (pi_block pi) in
+        ret (List.init n_inds (tFix mfix))
+      else 
+        (* Non-recursive inductive : no need for a fixpoint. *)
+        ret [build_func_normal NamedCtx.empty pi]
+    | CoFinite => tmFail "CoInductives are not supported."%bs 
+    end
+  ;;
+  (* Add the [Repr] instance corresponding to the function(s) we just built. *)
+  monad_map (fun '(pi, f) => declare_instance hints pi f) (List.combine (pi_block pi) quoted_funcs) ;;
+  ret tt.
+  
 Definition derive_local {A} := @derive A local. 
 Definition derive_global {A} := @derive A global. 
 Definition derive_export {A} := @derive A export. 
-     
-Definition test {A} (raw_ind : A) : TemplateMonad unit :=
-  (* Lookup. *)
-  mlet pi <- lookup_packed_inductive raw_ind ;;
-  (* Build fixpoint. *)
-  let mfix := build_func_mfix NamedCtx.empty $ pi_block pi in
-  tmEval cbv mfix ;;
-  (* Extract first function. *)
-  mlet func_ty <- tmUnquoteTyped Type (build_func_ty NamedCtx.empty pi) ;;
-  mlet func <- unquote_func func_ty (tFix mfix 0) ;;
-  tmPrint func.
-   
-Monomorphic Inductive mlist (A : Type) : Type :=
-  | MNil : mlist A
-  | MCons : A -> moption A -> mlist A
-with moption (A : Type) : Type :=
-  | MSome : mlist A -> moption A.
-
-Fixpoint repr_mlist (A : Type) (RA : Repr A) (prec : nat) (x : mlist A) : doc unit :=
-  let _ := fun A' RA' => Build_Repr _ (repr_mlist A' RA') in
-  let _ := fun A' RA' => Build_Repr _ (repr_moption A' RA') in
-  match x with 
-  | MNil => repr_ctor prec "MNil" []
-  | MCons a1 a2 => repr_ctor prec "MCons" [repr_arg a1; repr_arg a2]
-  end
-with repr_moption (A : Type) (RA : Repr A) (prec : nat) (x : moption A) : doc unit :=
-  let _ := fun A' RA' => Build_Repr _ (repr_mlist A' RA') in
-  let _ := fun A' RA' => Build_Repr _ (repr_moption A' RA') in
-  match x with 
-  | MSome a => repr_ctor prec "MSome" [repr_arg a]
-  end.
-
-Fixpoint even n : bool :=
-  match n with 
-  | 0 => true
-  | S n => odd n
-  end
-with odd n : bool :=
-  match n with 
-  | 0 => false 
-  | S n => even n
-  end.
-
-(*Definition kname := (MPfile ["Deriving"%bs], "even"%bs).
-MetaCoq Run (tmPrint =<< tmQuote =<< tmEval (unfold kname) even).*)
-
-Unset MetaCoq Strict Unquote Universe Mode.
-MetaCoq Run (test mlist).
