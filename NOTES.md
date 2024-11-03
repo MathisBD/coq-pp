@@ -1,7 +1,17 @@
+# Template monad improvements
+
+The implementation of tmMkDefinition and friends is a bit buggy ; for instance :
+1. handling of universes and evars in tmMkDefinition and friends is inconsistent and a bit bugged
+2. the API is non-uniform : e.g. for inductives we can pass in a mutual_inductive_entry, but for definitions and axioms we can only pass in a term. 
+3. related operations have separate implementations (e.g. TmDefinition vs TmDefinitionTerm, or TmAxiom vs TmAxiomTerm). Some are ad-hoc and some go through Plugin_core. This makes it harder to maintain.
+
+In the long run, it could be a good idea to reimplement this cleanly : have all core "tmMk" operations use an _entry_, and implement derived operations (e.g. make a definition with only the body) on top of these.
+
 # TODO
 
 - Profile and optimize the pretty-printing computation.
-- Improve naming of the derived Repr instance (repr_t is always there).
+- Improve naming of the derived Repr instance (repr_t is always there) --> check what Derive NoConfusion does.
+- Check what Derive NoConfusion does for mutual inductives (generate only one function or all functions ?)
 
 # Workshop Paper ?
 
@@ -22,14 +32,4 @@ Ideally I use bytestrings (both in pprint and in repr), but I don't want pprint 
 Solutions ?
 - extract bytestrings to a separate library ?
 - eventually deprecate ascii strings in Coq stdlib ?
-
-# MetaCoq bugs
-
-1. Quoting primitive strings does not work : 
-```
-MetaCoq Test Quote "hello"%pstring.
-(* (String.String "hello"%pstring) *) 
-```
-
-2. noccurn_between is incorrect (the base case contains && instead of ||).
 

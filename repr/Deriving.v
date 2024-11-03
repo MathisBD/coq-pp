@@ -276,28 +276,27 @@ Definition derive {A} (hints : hint_locality) (raw_ind : A) : TemplateMonad unit
   (* Lookup the inductive. *)
   mlet pi <- lookup_packed_inductive raw_ind ;;
   let n_inds := List.length pi.(pi_mbody).(ind_bodies) in
-  (* Build the raw function(s), choosing the right version. *)
-  mlet quoted_funcs <-
+  (* Build the raw function, choosing the right version. *)
+  mlet quoted_func <-
     match pi.(pi_mbody).(ind_finite) with 
     | BiFinite => 
       (* Record : no need to build a fixpoint. *)
-      ret [build_func_normal NamedCtx.empty pi] 
+      ret (build_func_normal NamedCtx.empty pi) 
     | Finite => 
       if Nat.ltb 1 n_inds || is_pi_recursive pi then 
         (* Mutual inductive : build a mutual fixpoint, from which we extract a raw function
            for each inductive in the block. *)
         (* Non-mutual inductive, but still recursive : build a fixpoint. *)
         let mfix := build_func_mfix NamedCtx.empty (pi_block pi) in
-        ret (List.init n_inds (tFix mfix))
+        ret (tFix mfix pi.(pi_ind).(inductive_ind))
       else 
         (* Non-recursive inductive : no need for a fixpoint. *)
-        ret [build_func_normal NamedCtx.empty pi]
+        ret (build_func_normal NamedCtx.empty pi)
     | CoFinite => tmFail "CoInductives are not supported."%bs 
     end
   ;;
-  (* Add the [Repr] instance corresponding to the function(s) we just built. *)
-  monad_map (fun '(pi, f) => declare_instance hints pi f) (List.combine (pi_block pi) quoted_funcs) ;;
-  ret tt.
+  (* Add the [Repr] instance corresponding to the function we just built. *)
+  declare_instance hints pi quoted_func.
   
 Definition derive_local {A} := @derive A local. 
 Definition derive_global {A} := @derive A global. 

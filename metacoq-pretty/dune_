@@ -1,0 +1,10 @@
+(coq.theory
+ (name MetaCoqPretty)
+ (package coq-pprint)
+ (theories
+  PPrint
+  MetaCoq.Common
+  MetaCoq.Template
+  MetaCoq.Utils
+  Equations
+  Ltac2))

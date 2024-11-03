@@ -1,4 +1,5 @@
-From Coq Require Import Bool List Uint63 PrimString.
+From Coq Require Import Bool List Uint63 PrimString NArith.BinNat. 
+From PPrint Require Import Utils.
 Import ListNotations.
 
 (** * Width requirements. *)
@@ -34,7 +35,7 @@ Inductive doc (A : Type) : Type :=
   | Empty : doc A
   (** [Blank n] is an atomic document that consists of [n] blank characters. *)
   | Blank : nat -> doc A
-  (** [Str len s] is an atomic string [s] of *apparent* length [len].
+  (** [Str len s] is an atomic string [s] of _apparent_ length [len].
 
       The apparent length of a string is the number of (unicode) code points which appear 
       in the string. In general this might be less than the number of bytes in the string : 
@@ -113,9 +114,9 @@ Definition doc_requirement {A} (d : doc A) : requirement :=
     requirements takes linear time. 
 *)
 
-(** * Basic combinators. *)
+(** * Atomic documents. *)
     
-Section BasicCombinators.
+Section AtomicDocuments.
 Context {A : Type}.
 
 (** [empty] is the empty document. *)
@@ -126,44 +127,34 @@ Definition empty : doc A := Empty.
 Definition char (c : char63) : doc A := 
   Str 1 (PrimString.make 1%int63 c).
 
-(** [utf8_length s] counts the number of code points that occur in [s],
-    assuming a UTF8 encoding. In general this might be smaller than the number
-    of bytes in [s] : each code point is encoded using 1 to 4 bytes. *)
-Definition utf8_length (str : string) : nat :=
-  let len := PrimString.length str in
-  (* [i] is the index of the byte we are looking at.
-     [fuel] is used to make [loop] structurally recursive. *)
-  let fix loop (acc : nat) (i : int) (fuel : nat) :=
-    match fuel with 
-    | 0 => (* This should not happen. *) acc 
-    | S fuel =>
-      (* Check if we are done. *)
-      if (len <=? i)%uint63 then acc else 
-      (* Compute the number of bytes that the current code point spans. *)
-      let byte_count := 
-        let byte := get str i in
-        if      (byte <? 128)%uint63 then 1%int63
-        else if (byte <? 224)%uint63 then 2%int63
-        else if (byte <? 240)%uint63 then 3%int63
-        else 4%int63
-      in 
-      (* Continue on the next code point. *)
-      loop (S acc) (add i byte_count) fuel
-    end
-  in
-  loop 0%nat 0%int63 (Uint63.to_nat (length str)).
-
-(** [str s] is an atomic document that consists of the utf8 primitive string [s]. 
+(** [str s] is an atomic document which consists of the utf8 primitive string [s]. 
     We assume (but do not check) that [s] does not contain a newline. *)
 Definition str (s : PrimString.string) : doc A :=
   Str (utf8_length s) s.
 
-(** The atomic document [hardline] represents a forced newline. 
+(** [nat2 n] is an atomic document which consists in the binary representation
+    of the natural number [n]. *)
+Definition nat2 (n : nat) : doc A :=
+  str (string_of_binary (N.of_nat n)).
+
+(** [nat10 n] is an atomic document which consists in the base 10 representation
+    of the natural number [n]. *)
+Definition nat10 (n : nat) : doc A :=
+  str (string_of_decimal (Nat.to_uint n)).
+
+(** [nat16 n] is an atomic document which consists in the base 16 representation
+    of the natural number [n]. *)
+Definition nat16 (n : nat) : doc A :=
+  str (string_of_hexadecimal (Nat.to_hex_uint n)).
+    
+(** Warning : most of the time you should use the higher-level functions [softline] or [break].
+
+    [hardline] represents a forced newline.
     This document has infinite ideal width: thus, if there is a choice between printing it
     in flat mode and printing it in normal mode, normal mode is preferred. 
     In other words, when [hardline] is placed directly inside a group, this
     group is dissolved: [group hardline] is equivalent to [hardline]. 
-    This combinator should be seldom used; consider using [break] instead. *)
+    This combinator should be seldom used; consider using [break 0] instead. *)
 Definition hardline : doc A := HardLine.
     
 (** [softline] represents an optional newline :
@@ -171,19 +162,38 @@ Definition hardline : doc A := HardLine.
     - in flat mode it disappears. *)
 Definition softline : doc A := IfFlat (Width 0) Empty HardLine.
 
-(** The atomic document [blank n] consists of [n] blank characters. 
-    A blank character is like an ordinary ASCII space character [char ' '], 
-    except that blank characters that appear at the end of a line are automatically suppressed. *)
+(** The atomic document [blank n] consists of [n] blank characters. *)
 Definition blank n : doc A := 
   match n with 
   | 0 => Empty
   | _ => Blank n
   end.
     
-(** [space] is a synonym for [blank 1]. It consists of one blank character.
-    It is therefore not equivalent to [char ' ']. *)
+(** [space] is a synonym for [blank 1]. It consists of one blank character. *)
 Definition space : doc A := Blank 1.
    
+(** [break n] is a breakable space, which is printed as :
+    - a space in flat mode, 
+    - a newline character followed by [n] spaces in normal mode. *)
+Definition break (n : nat) : doc A := 
+  (* This is extremely common so I inline some functions. *)
+  IfFlat (Width 1) (Blank 1) (Cat Infinity HardLine (Blank n)). 
+
+End AtomicDocuments.
+
+(** * Document combinators. *)
+
+Section Combinators.
+Context {A : Type}. 
+
+(** [cat doc1 doc2] or [doc1 ^^ doc2] is the concatenation of the documents [doc1] and [doc2]. *) 
+Definition cat doc1 doc2 : doc A :=
+  match doc1, doc2 with 
+  | Empty, _ => doc2
+  | _, Empty => doc1
+  | _, _ => Cat (add_requirements (doc_requirement doc1) (doc_requirement doc2)) doc1 doc2
+  end.
+
 (** [ifflat doc1 doc2] produces a document which is printed as :
     - [doc1] in flat mode. 
     - [doc2] in normal mode. *)
@@ -191,19 +201,6 @@ Definition ifflat doc1 doc2 : doc A :=
   match doc1 with 
   | IfFlat req doc1 _ => IfFlat req doc1 doc2
   | _ => IfFlat (doc_requirement doc1) doc1 doc2
-  end.
-
-(** The document [break n] is a breakable blank of width [n]. It is printed as :
-    - [n] blank characters in flat mode, 
-    - a single newline character in normal mode. *)
-Definition break (n : nat) : doc A := ifflat (blank n) hardline.
-  
-(** [cat doc1 doc2] or [doc1 ^^ doc2] is the concatenation of the documents [doc1] and [doc2]. *) 
-Definition cat doc1 doc2 : doc A :=
-  match doc1, doc2 with 
-  | Empty, _ => doc2
-  | _, Empty => doc1
-  | _, _ => Cat (add_requirements (doc_requirement doc1) (doc_requirement doc2)) doc1 doc2
   end.
 
 (** [group doc] encodes a choice. If the document [doc] fits on the current
@@ -218,7 +215,9 @@ Definition group d : doc A :=
   | req => Group req d
   end.
    
-(** To render the document [nest n doc], the printing engine temporarily
+(** Warning : most of the time you want to use [align] instead of [nest].
+
+    To render the document [nest n doc], the printing engine temporarily
     increases the current indentation level by [n], then renders [doc]. 
     The effect of the current indentation level is as follows: every time a
     newline character is emitted, it is immediately followed by [n] blank
@@ -239,15 +238,8 @@ Definition align d : doc A :=
     The meaning of annotations is backend-dependent (see below). *)
 Definition annotate annot d : doc A := 
   Annot (doc_requirement d) annot d.
-  
-End BasicCombinators.
 
 Notation "d1 ^^ d2" := (cat d1 d2) (at level 60, right associativity).
-
-(** * High-level combinators. *)
-
-Section HighLevelCombinators.
-Context {A : Type}.
 
 (** [repeat n doc] is the document obtained by concatenating [n] copies of
     the document [doc]. *)
@@ -277,49 +269,20 @@ Fixpoint separate sep ds : doc A :=
   | d :: ds => d ^^ sep ^^ separate sep ds
   end.
 
+(** [separate_map sep f xs] is shorthand for [separate sep (List.map f xs)]. *)
+Definition separate_map {T} sep (f : T -> doc A) (xs : list T) : doc A :=
+  separate sep (List.map f xs).
+
 (** [hang n doc] is analogous to [align], but additionally indents all lines
     except the first one by [n] spaces. *)
 Definition hang n d : doc A := align (nest n d).
     
-(** [prefix spaces indent left right] has the following flat layout:
-    [
-      left right
-    ]
-    and the following non-flat layout:
-    [
-      left
-        right
-    ]
-    - [spaces] controls the number of spaces between [left] and [right] (when flat).
-    - [indent] controls the nesting of [right] (when not flat). *)
-Definition prefix spaces indent left right : doc A :=
-  ifflat 
-    (left ^^ blank spaces ^^ right) 
-    (left ^^ nest indent (hardline ^^ right)).
-
-(** [infix spaces indent left middle right] has the following flat layout:
-    [
-      left middle right
-    ]
-    and the following non-flat layout:
-    [
-      left
-        middle
-      right
-    ]
-    - [spaces] controls the number of spaces between [left], [right] and [middle] (when flat).
-    - [indent] controls the nesting of [middle] (when not flat). *)
-Definition infix spaces indent left middle right : doc A :=
-  ifflat 
-    (left ^^ blank spaces ^^ middle ^^ blank spaces ^^ right) 
-    (left ^^ nest indent (hardline ^^ middle) ^^ hardline ^^ right).
-
 (** [flow sep docs] separates the documents in the list [docs] with the
     separator [sep] and arranges for a new line to begin whenever a document
-    does not fit on the current line. This is useful for typesetting
-    free-flowing, ragged-right text. A typical choice of [sep] is [break b],
-    where [b] is the number of spaces that must be inserted between two
-    consecutive words (when displayed on the same line). *)
+    does not fit on the current line. 
+    
+    A typical choice of [sep] is [break 0] for free-flowing text
+    or [str "," ^^ break 0] for a list. *)
 Definition flow sep ds : doc A :=
   match ds with 
   | [] => empty 
@@ -336,8 +299,8 @@ Definition flow_map {T} sep (f : T -> doc A) (xs : list T)  : doc A :=
     [
       leftdocright
     ]
-    In normal mode it makes sure to increase the indentation level, yielding the 
-    following layout :
+    In normal mode it makes sure to increase the indentation level (using [align]), 
+    yielding the following layout :
     [
       leftdoc1
           doc2
@@ -352,10 +315,16 @@ Definition bracket lbracket contents rbracket : doc A :=
 Definition paren contents : doc A :=
   bracket "(" contents ")".
 
-End HighLevelCombinators.
+End Combinators.
+
+(** [x ^^ y] concatenates [x] and [y]. *)
+Notation "d1 ^^ d2" := (cat d1 d2) (at level 60, right associativity).
 
 (** [x ^+^ y] separates [x] and [y] with a non-breakable space. *)
 Notation "x ^+^ y" := (x ^^ space ^^ y) (at level 60, right associativity).
 
 (** [x ^/^ y] separates [x] and [y] with a breakable space. *)
-Notation "x ^/^ y" := (x ^^ break 1 ^^ y) (at level 60, right associativity).
+Notation "x ^/^ y" := (x ^^ break 0 ^^ y) (at level 60, right associativity).
+
+(** [x ^/^ y] separates [x] and [y] with a breakable space [break 2]. *)
+Notation "x ^//^ y" := (x ^^ break 2 ^^ y) (at level 60, right associativity).
