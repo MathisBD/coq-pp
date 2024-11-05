@@ -2,7 +2,7 @@
 
 (using coq 0.9)
 
-(name coq-pprint)
+(name coq-pprint-playground)
 
 ; The .opam file is regenerated each time you call dune build.
 ; To manually regenerate the .opam file, run :
@@ -11,7 +11,7 @@
 (generate_opam_files true)
 
 (package
- (name coq-pprint)
+ (name coq-pprint-playground)
  (maintainers "Mathis Bouverot-Dupuis (mathis.bouverot@ens.psl.eu)")
  (authors "Mathis Bouverot-Dupuis")
  (homepage "https://github.com/MathisBD/coq-pprint")
@@ -21,4 +21,6 @@
   (coq
    (>= 8.20.0))
   coq-metacoq-template
-  coq-reduction-effects))
+  coq-reduction-effects
+  (coq-pprint
+   (= 0.1.0))))

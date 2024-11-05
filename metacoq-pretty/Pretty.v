@@ -145,7 +145,7 @@ End Config.
 
 (** Pretty-printing. *)
 
-Section PrintTerm.
+Section Printing.
 Context (config : Config.t).
 Context (env : global_env_ext).
 
@@ -346,9 +346,7 @@ Fixpoint print_term (top : bool) (ctx : list ident) (t : term) {struct t} : doc 
     bracket "Array(" (flow (str "," ^^ break 0) contents) ")"
   end.
 
-End PrintTerm.
-
-Definition test : TemplateMonad unit :=
+(*Definition test : TemplateMonad unit :=
   mlet (env, t) <- tmQuoteRec 
     (fix add (n m : nat) {struct n} : nat :=
     match n with
@@ -357,11 +355,13 @@ Definition test : TemplateMonad unit :=
     end) ;;
   let output := pp_string 80 $ print_term Config.basic (empty_ext env) true [] t in
   tmPrint =<< tmEval cbv output.
-MetaCoq Run test. 
+MetaCoq Run test. *)
 
-Definition pr_context_decl Γ (c : context_decl) : ident * t :=
-  match c with
-  | {| decl_name := na; decl_type := ty; decl_body := None |} =>
+Definition print_context_decl (ctx : list ident) (decl : context_decl) : ident * doc unit :=
+  match decl.(body) with
+  | None =>
+  | Some body => 
+  | {| decl_name := n; decl_type := ty; decl_body := None |} =>
     let na' := (fresh_name Σ Γ na.(binder_name) (Some ty)) in
     (na', ("(" ^ na' ^ " : " ^ print_term Γ true ty ^ ")"))
   | {| decl_name := na; decl_type := ty; decl_body := Some b |} =>
@@ -369,6 +369,7 @@ Definition pr_context_decl Γ (c : context_decl) : ident * t :=
     (na', ("(" ^ na' ^ " : " ^ print_term Γ true ty ^ " := " ^
       print_term Γ true b ^ ")"))
   end.
+
 Fixpoint print_context Γ Δ : list ident * t :=
   match Δ with
   | [] => (Γ, "" : t)
@@ -380,23 +381,29 @@ Fixpoint print_context Γ Δ : list ident * t :=
     | _ => (na :: Γ, s ^ " " ^ s')
     end
   end.
+
 Definition print_one_cstr Γ (mib : mutual_inductive_body) (c : constructor_body) : t :=
   let '(Γargs, s) := print_context Γ c.(cstr_args) in
   c.(cstr_name) ^ " : " ^ s ^ "_" ^ print_list (print_term Γargs true) " " c.(cstr_indices).
+
 Definition print_one_ind (short : bool) Γ (mib : mutual_inductive_body) (oib : one_inductive_body) : t :=
   let '(Γpars, spars) := print_context Γ mib.(ind_params) in
   let '(Γinds, sinds) := print_context Γpars oib.(ind_indices) in
   oib.(ind_name) ^ spars ^ sinds ^ print_term Γinds true (tSort oib.(ind_sort)) ^ ":=" ^ nl ^
   if short then "..."
   else print_list (print_one_cstr Γpars mib) nl oib.(ind_ctors).
+
 Definition print_one_cstr_entry Γ (mie : mutual_inductive_entry) (c : ident × term) : t :=
   c.1 ^ " : " ^ print_term Γ true c.2.
+
 Definition print_one_ind_entry (short : bool) Γ (mie : mutual_inductive_entry) (oie : one_inductive_entry) : t :=
   let '(Γpars, spars) := print_context Γ mie.(mind_entry_params) in
   oie.(mind_entry_typename) ^ spars ^ print_term Γpars true oie.(mind_entry_arity) ^ ":=" ^ nl ^
   if short then "..."
   else print_list (print_one_cstr_entry Γpars mie) nl (combine oie.(mind_entry_consnames) oie.(mind_entry_lc)).
+
 End env.
+
 Definition universes_decl_of_universes_entry e :=
   match e with
   | Monomorphic_entry ctx => Monomorphic_ctx

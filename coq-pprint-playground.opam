@@ -10,6 +10,7 @@ depends: [
   "coq" {>= "8.20.0"}
   "coq-metacoq-template"
   "coq-reduction-effects"
+  "coq-pprint" {= "0.1.0"}
   "odoc" {with-doc}
 ]
 build: [

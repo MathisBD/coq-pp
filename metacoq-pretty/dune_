@@ -1,6 +1,6 @@
 (coq.theory
  (name MetaCoqPretty)
- (package coq-pprint)
+ (package coq-pprint-playground)
  (theories
   PPrint
   MetaCoq.Common
